@@ -1,0 +1,249 @@
+"""SQLite-based GEPA run tracker.
+
+This is a simplified tracker that uses SQLite storage directly,
+providing queryable logs for GEPA optimization runs.
+"""
+
+import uuid
+import logging
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from dspy_gepa_logger.storage.sqlite_backend import SQLiteStorage
+from dspy_gepa_logger.parsers.gepa_log_parser import GEPALogParser
+
+logger = logging.getLogger(__name__)
+
+
+class SQLiteGEPATracker:
+    """Simplified GEPA tracker using SQLite storage.
+
+    This tracker provides:
+    - Automatic storage to SQLite database
+    - Queryable run data via SQL
+    - Integration with GEPA log parser for validation/pareto data
+    - Simple API for basic tracking needs
+
+    Usage:
+        tracker = SQLiteGEPATracker(db_path="./gepa_runs.db")
+
+        with tracker.track(gepa_log_dir="./logs") as run_id:
+            optimized = gepa.compile(student=program, trainset=train, valset=val, log_dir="./logs")
+
+        # Query results via SQL
+        conn = tracker.storage._get_connection()
+        runs = conn.execute("SELECT * FROM run_summary").fetchall()
+    """
+
+    def __init__(self, db_path: str | Path):
+        """Initialize the SQLite tracker.
+
+        Args:
+            db_path: Path to SQLite database file
+        """
+        self.storage = SQLiteStorage(db_path)
+        self._current_run_id: Optional[str] = None
+
+    @contextmanager
+    def track(
+        self,
+        run_id: Optional[str] = None,
+        config: Optional[dict[str, Any]] = None,
+        gepa_log_dir: Optional[str | Path] = None,
+    ):
+        """Track a GEPA run.
+
+        Args:
+            run_id: Optional run ID (generated if not provided)
+            config: GEPA configuration dictionary
+            gepa_log_dir: Path to GEPA's log directory for parsing validation/pareto data
+
+        Yields:
+            The run ID
+
+        Example:
+            with tracker.track(gepa_log_dir="./logs") as run_id:
+                optimized = gepa.compile(..., log_dir="./logs")
+        """
+        run_id = run_id or str(uuid.uuid4())
+        config = config or {}
+
+        try:
+            # Start tracking
+            self._start_run(run_id, config)
+            yield run_id
+
+            # Complete successfully
+            self._end_run(run_id, status="completed", gepa_log_dir=gepa_log_dir)
+
+        except Exception as e:
+            # Handle failure
+            logger.exception(f"Error during GEPA run {run_id}")
+            self._end_run(run_id, status="failed", error_message=str(e))
+            raise
+
+    def _start_run(self, run_id: str, config: dict[str, Any]) -> None:
+        """Start tracking a run.
+
+        Args:
+            run_id: Run identifier
+            config: GEPA configuration
+        """
+        self._current_run_id = run_id
+        self.storage.create_run(run_id=run_id, config=config)
+        logger.info(f"Started tracking GEPA run: {run_id}")
+
+    def _end_run(
+        self,
+        run_id: str,
+        status: str,
+        error_message: Optional[str] = None,
+        gepa_log_dir: Optional[str | Path] = None,
+    ) -> None:
+        """End tracking a run.
+
+        Args:
+            run_id: Run identifier
+            status: Final status (completed, failed, stopped)
+            error_message: Optional error message if failed
+            gepa_log_dir: Optional path to GEPA logs for parsing
+        """
+        # Update run status
+        self.storage.update_run_status(
+            run_id=run_id,
+            status=status,
+            error_message=error_message
+        )
+
+        # Parse GEPA logs if provided and run completed successfully
+        if status == "completed" and gepa_log_dir:
+            try:
+                self._parse_and_store_gepa_logs(run_id, gepa_log_dir)
+            except Exception as e:
+                logger.warning(f"Error parsing GEPA logs: {e}")
+
+        logger.info(f"Ended GEPA run {run_id}: status={status}")
+        self._current_run_id = None
+
+    def _parse_and_store_gepa_logs(self, run_id: str, gepa_log_dir: str | Path) -> None:
+        """Parse GEPA's log directory and store data.
+
+        Args:
+            run_id: Run identifier
+            gepa_log_dir: Path to GEPA's log directory
+        """
+        parser = GEPALogParser(gepa_log_dir)
+        parsed_data = parser.parse_all()
+
+        validation_scores = parsed_data["validation_scores"]
+        aggregate_scores = parsed_data["aggregate_scores"]
+        pareto_frontiers = parsed_data["pareto_frontiers"]
+
+        logger.info(
+            f"Parsed GEPA logs: {len(validation_scores)} iterations, "
+            f"{len(pareto_frontiers)} pareto snapshots"
+        )
+
+        # Store pareto frontier snapshots
+        for iteration, frontier in pareto_frontiers.items():
+            # Get or create iteration record
+            # Note: In full integration, iterations would already exist from adapter hooks
+            # For now, we just store the pareto snapshot
+            # We set best_program_id to None since we don't have program records
+            # (they're only created with full instrumented adapter)
+            snapshot_id = self.storage.create_pareto_snapshot(
+                run_id=run_id,
+                snapshot_type="iteration",
+                best_program_id=None,  # No program records without full instrumentation
+                best_score=frontier.get("best_score"),
+                iteration_id=None,  # Would link to iteration if it exists
+            )
+
+            # Store per-task data
+            # Similarly, we don't link to program_id since we don't have program records
+            tasks = frontier.get("tasks", {})
+            for task_id, task_data in tasks.items():
+                self.storage.create_pareto_task(
+                    snapshot_id=snapshot_id,
+                    example_id=task_id,
+                    dominant_program_id=None,  # No program records without full instrumentation
+                    dominant_score=task_data.get("score"),
+                )
+
+        # Update run metrics
+        if aggregate_scores:
+            # Get final best score
+            final_iteration = max(aggregate_scores.keys())
+            final_scores = aggregate_scores[final_iteration]
+            if final_scores:
+                final_best_score = max(final_scores.values())
+                self.storage.update_run_metrics(
+                    run_id=run_id,
+                    total_iterations=len(validation_scores),
+                    final_score=final_best_score,
+                )
+
+    def get_run_summary(self, run_id: Optional[str] = None) -> Optional[dict]:
+        """Get run summary.
+
+        Args:
+            run_id: Run ID (defaults to current run)
+
+        Returns:
+            Run summary dictionary or None if not found
+        """
+        run_id = run_id or self._current_run_id
+        if not run_id:
+            return None
+
+        return self.storage.get_run(run_id)
+
+    def query(self, sql: str, params: tuple = ()) -> list[dict]:
+        """Execute a SQL query and return results.
+
+        Args:
+            sql: SQL query string
+            params: Query parameters
+
+        Returns:
+            List of result dictionaries
+        """
+        conn = self.storage._get_connection()
+        cursor = conn.execute(sql, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def list_runs(self) -> list[str]:
+        """List all run IDs.
+
+        Returns:
+            List of run IDs ordered by recency
+        """
+        return self.storage.list_runs()
+
+    def close(self) -> None:
+        """Close database connections."""
+        self.storage.close()
+
+
+# Convenience function for quick setup
+def track_gepa_run(
+    db_path: str | Path = "./gepa_runs.db",
+    gepa_log_dir: Optional[str | Path] = None,
+) -> SQLiteGEPATracker:
+    """Create a SQLite GEPA tracker.
+
+    Args:
+        db_path: Path to SQLite database
+        gepa_log_dir: Optional path to GEPA logs
+
+    Returns:
+        SQLiteGEPATracker instance ready to use
+
+    Example:
+        tracker = track_gepa_run(db_path="./runs.db", gepa_log_dir="./logs")
+        with tracker.track() as run_id:
+            optimized = gepa.compile(..., log_dir="./logs")
+    """
+    return SQLiteGEPATracker(db_path)
