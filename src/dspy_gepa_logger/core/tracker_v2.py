@@ -576,6 +576,117 @@ class GEPATracker:
             return []
         return self.metric_logger.evaluations
 
+    def get_evaluation_comparison(
+        self,
+        baseline_idx: int | None = None,
+        optimized_idx: int | None = None,
+    ) -> dict[str, Any]:
+        """Get evaluation comparison between baseline and optimized candidates.
+
+        Groups examples into improvements, regressions, and same categories.
+        Each entry includes example inputs, baseline/optimized outputs, and scores.
+
+        Args:
+            baseline_idx: Baseline candidate index (default: seed)
+            optimized_idx: Optimized candidate index (default: best/last)
+
+        Returns:
+            Dict with:
+            - improvements: List of examples that improved
+            - regressions: List of examples that regressed
+            - same: List of examples with no change
+            - summary: Overall stats (counts, avg scores)
+        """
+        if self.metric_logger is None:
+            return {
+                "improvements": [],
+                "regressions": [],
+                "same": [],
+                "summary": {"error": "No evaluation data available"},
+            }
+
+        if baseline_idx is None:
+            baseline_idx = self.seed_candidate_idx or 0
+        if optimized_idx is None:
+            optimized_idx = len(self.final_candidates) - 1 if self.final_candidates else 0
+
+        # Get evaluations for both candidates
+        baseline_evals = self.metric_logger.get_evaluations_for_candidate(baseline_idx)
+        optimized_evals = self.metric_logger.get_evaluations_for_candidate(optimized_idx)
+
+        # Build lookup by example_id
+        baseline_by_example = {e.example_id: e for e in baseline_evals}
+        optimized_by_example = {e.example_id: e for e in optimized_evals}
+
+        improvements = []
+        regressions = []
+        same = []
+
+        # Find common examples
+        all_examples = set(baseline_by_example.keys()) | set(optimized_by_example.keys())
+
+        for example_id in sorted(all_examples):
+            baseline_eval = baseline_by_example.get(example_id)
+            optimized_eval = optimized_by_example.get(example_id)
+
+            if not baseline_eval or not optimized_eval:
+                continue  # Skip examples not evaluated by both
+
+            delta = optimized_eval.score - baseline_eval.score
+
+            entry = {
+                "example_id": example_id,
+                "inputs": baseline_eval.example_inputs or optimized_eval.example_inputs,
+                "baseline_score": baseline_eval.score,
+                "baseline_output": baseline_eval.prediction_preview,
+                "baseline_feedback": baseline_eval.feedback,
+                "optimized_score": optimized_eval.score,
+                "optimized_output": optimized_eval.prediction_preview,
+                "optimized_feedback": optimized_eval.feedback,
+                "delta": delta,
+            }
+
+            if delta > 0.01:  # Small threshold to avoid float comparison issues
+                improvements.append(entry)
+            elif delta < -0.01:
+                regressions.append(entry)
+            else:
+                same.append(entry)
+
+        # Sort by delta magnitude
+        improvements.sort(key=lambda x: x["delta"], reverse=True)
+        regressions.sort(key=lambda x: x["delta"])
+
+        # Compute summary stats
+        total = len(improvements) + len(regressions) + len(same)
+        baseline_avg = (
+            sum(e["baseline_score"] for e in improvements + regressions + same) / total
+            if total > 0
+            else 0
+        )
+        optimized_avg = (
+            sum(e["optimized_score"] for e in improvements + regressions + same) / total
+            if total > 0
+            else 0
+        )
+
+        return {
+            "improvements": improvements,
+            "regressions": regressions,
+            "same": same,
+            "summary": {
+                "total_examples": total,
+                "num_improvements": len(improvements),
+                "num_regressions": len(regressions),
+                "num_same": len(same),
+                "baseline_avg_score": baseline_avg,
+                "optimized_avg_score": optimized_avg,
+                "avg_lift": optimized_avg - baseline_avg,
+                "baseline_idx": baseline_idx,
+                "optimized_idx": optimized_idx,
+            },
+        }
+
     # ==================== Visualization ====================
 
     def print_prompt_diff(
@@ -826,6 +937,64 @@ class GEPATracker:
             for phase, count in phases.items()
         )
 
+        # Get evaluation comparison
+        eval_comparison = self.get_evaluation_comparison()
+        eval_comp_summary = eval_comparison.get("summary", {})
+
+        def build_eval_table(entries: list, category: str) -> str:
+            if not entries:
+                return f'<p class="empty-message">No {category} examples</p>'
+
+            # Get input field names from first entry
+            input_fields = list(entries[0].get("inputs", {}).keys()) if entries else []
+
+            header_cells = "".join(f"<th>{html.escape(f)}</th>" for f in input_fields)
+            rows = ""
+            for i, entry in enumerate(entries):
+                inputs = entry.get("inputs", {})
+                input_cells = "".join(
+                    f'<td class="input-cell">{html.escape(str(inputs.get(f, "")))[:100]}</td>'
+                    for f in input_fields
+                )
+
+                delta_class = "delta-positive" if entry["delta"] > 0 else "delta-negative" if entry["delta"] < 0 else ""
+                delta_str = f'+{entry["delta"]:.2f}' if entry["delta"] > 0 else f'{entry["delta"]:.2f}'
+
+                rows += f"""
+                <tr>
+                    <td class="row-num">{i + 1}</td>
+                    {input_cells}
+                    <td class="score-cell">{entry["baseline_score"]:.2f}</td>
+                    <td class="output-cell">{html.escape(str(entry.get("baseline_output", ""))[:150])}</td>
+                    <td class="score-cell">{entry["optimized_score"]:.2f}</td>
+                    <td class="output-cell">{html.escape(str(entry.get("optimized_output", ""))[:150])}</td>
+                    <td class="delta-cell {delta_class}">{delta_str}</td>
+                </tr>
+                """
+
+            return f"""
+            <table class="eval-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        {header_cells}
+                        <th>Base Score</th>
+                        <th>Baseline Output</th>
+                        <th>Opt Score</th>
+                        <th>Optimized Output</th>
+                        <th>Delta</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+            """
+
+        improvements_table = build_eval_table(eval_comparison.get("improvements", []), "improvement")
+        regressions_table = build_eval_table(eval_comparison.get("regressions", []), "regression")
+        same_table = build_eval_table(eval_comparison.get("same", []), "unchanged")
+
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1075,6 +1244,158 @@ class GEPATracker:
             margin: 2rem 0;
         }}
 
+        /* Tabs */
+        .tabs {{
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 1rem;
+        }}
+
+        .tab {{
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }}
+
+        .tab:hover {{
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+        }}
+
+        .tab.active {{
+            color: var(--accent-blue);
+            border-bottom-color: var(--accent-blue);
+        }}
+
+        .tab-count {{
+            margin-left: 0.5rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.75rem;
+        }}
+
+        .tab-count.green {{
+            background: rgba(63, 185, 80, 0.2);
+            color: var(--accent-green);
+        }}
+
+        .tab-count.red {{
+            background: rgba(248, 81, 73, 0.2);
+            color: var(--accent-red);
+        }}
+
+        .tab-count.gray {{
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }}
+
+        .tab-content {{
+            display: none;
+        }}
+
+        .tab-content.active {{
+            display: block;
+        }}
+
+        /* Evaluation table */
+        .eval-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }}
+
+        .eval-table th {{
+            background: var(--bg-tertiary);
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            white-space: nowrap;
+        }}
+
+        .eval-table td {{
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+        }}
+
+        .eval-table tr:hover {{
+            background: var(--bg-secondary);
+        }}
+
+        .row-num {{
+            color: var(--text-secondary);
+            font-weight: 500;
+            width: 40px;
+        }}
+
+        .input-cell {{
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+
+        .output-cell {{
+            max-width: 250px;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }}
+
+        .score-cell {{
+            font-weight: 600;
+            width: 80px;
+            text-align: center;
+        }}
+
+        .delta-cell {{
+            font-weight: 600;
+            width: 70px;
+            text-align: center;
+        }}
+
+        .delta-positive {{
+            color: var(--accent-green);
+        }}
+
+        .delta-negative {{
+            color: var(--accent-red);
+        }}
+
+        .empty-message {{
+            color: var(--text-secondary);
+            padding: 2rem;
+            text-align: center;
+        }}
+
+        .score-summary {{
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }}
+
+        .score-summary-item {{
+            text-align: center;
+        }}
+
+        .score-summary-value {{
+            font-size: 1.5rem;
+            font-weight: 600;
+        }}
+
+        .score-summary-label {{
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }}
+
         @media (max-width: 768px) {{
             .diff-container {{
                 grid-template-columns: 1fr;
@@ -1125,6 +1446,50 @@ class GEPATracker:
             {diff_html if diff_html else "<p>No prompt changes detected.</p>"}
         </div>
 
+        <div class="section">
+            <h2>📈 Performance Comparison</h2>
+            <div class="score-summary">
+                <div class="score-summary-item">
+                    <div class="score-summary-value">{eval_comp_summary.get('baseline_avg_score', 0):.2f}</div>
+                    <div class="score-summary-label">Baseline Avg</div>
+                </div>
+                <div class="score-summary-item">
+                    <div class="score-summary-value" style="color: var(--accent-green);">{eval_comp_summary.get('optimized_avg_score', 0):.2f}</div>
+                    <div class="score-summary-label">Optimized Avg</div>
+                </div>
+                <div class="score-summary-item">
+                    <div class="score-summary-value" style="color: {'var(--accent-green)' if eval_comp_summary.get('avg_lift', 0) >= 0 else 'var(--accent-red)'};">{'+' if eval_comp_summary.get('avg_lift', 0) >= 0 else ''}{eval_comp_summary.get('avg_lift', 0):.2f}</div>
+                    <div class="score-summary-label">Avg Lift</div>
+                </div>
+                <div class="score-summary-item">
+                    <div class="score-summary-value">{eval_comp_summary.get('total_examples', 0)}</div>
+                    <div class="score-summary-label">Examples</div>
+                </div>
+            </div>
+
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('improvements')">
+                    Improvements <span class="tab-count green">{eval_comp_summary.get('num_improvements', 0)}</span>
+                </button>
+                <button class="tab" onclick="showTab('regressions')">
+                    Regressions <span class="tab-count red">{eval_comp_summary.get('num_regressions', 0)}</span>
+                </button>
+                <button class="tab" onclick="showTab('same')">
+                    Same <span class="tab-count gray">{eval_comp_summary.get('num_same', 0)}</span>
+                </button>
+            </div>
+
+            <div id="improvements" class="tab-content active">
+                {improvements_table}
+            </div>
+            <div id="regressions" class="tab-content">
+                {regressions_table}
+            </div>
+            <div id="same" class="tab-content">
+                {same_table}
+            </div>
+        </div>
+
         {"<div class='section'><h2>📞 LM Calls by Phase</h2><table><thead><tr><th>Phase</th><th>Count</th></tr></thead><tbody>" + phase_rows + "</tbody></table></div>" if phase_rows else ""}
 
         <div class="section">
@@ -1132,6 +1497,19 @@ class GEPATracker:
             {candidates_html}
         </div>
     </div>
+
+    <script>
+        function showTab(tabId) {{
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            // Deactivate all tabs
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            // Show selected tab content
+            document.getElementById(tabId).classList.add('active');
+            // Activate clicked tab
+            event.target.closest('.tab').classList.add('active');
+        }}
+    </script>
 </body>
 </html>"""
 

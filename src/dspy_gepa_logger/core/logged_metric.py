@@ -98,6 +98,27 @@ def _serialize_prediction(
         return None, preview_str
 
 
+def _serialize_example(example: Any) -> dict[str, Any]:
+    """Serialize example inputs to a dict for display.
+
+    Args:
+        example: The example object
+
+    Returns:
+        Dict of input field names to values
+    """
+    if hasattr(example, "inputs") and callable(example.inputs):
+        # DSPy Example with .inputs() method
+        input_keys = example.inputs()
+        return {k: getattr(example, k, None) for k in input_keys}
+    elif hasattr(example, "toDict") and callable(example.toDict):
+        return example.toDict()
+    elif hasattr(example, "__dict__"):
+        return {k: v for k, v in example.__dict__.items() if not k.startswith("_")}
+    else:
+        return {"value": str(example)}
+
+
 @dataclass
 class EvaluationRecord:
     """Single metric evaluation record.
@@ -112,6 +133,9 @@ class EvaluationRecord:
     phase: str  # 'eval', 'validation', 'minibatch'
     score: float
     feedback: str | None  # The "why" - critical for UX
+
+    # Example inputs for display
+    example_inputs: dict[str, Any] = field(default_factory=dict)
 
     # Prediction stored as ref + preview (not raw object!)
     prediction_ref: str | None = None  # JSON blob for full reconstruction
@@ -234,6 +258,9 @@ class LoggedMetric:
         else:
             pred_ref, pred_preview = None, ""
 
+        # Serialize example inputs for display
+        example_inputs = _serialize_example(example)
+
         # Record evaluation
         record = EvaluationRecord(
             eval_id=str(uuid.uuid4()),
@@ -243,6 +270,7 @@ class LoggedMetric:
             phase="eval",
             score=float(score) if score is not None else 0.0,
             feedback=str(feedback) if feedback else None,
+            example_inputs=example_inputs,
             prediction_ref=pred_ref,
             prediction_preview=pred_preview,
         )
