@@ -1,0 +1,261 @@
+"""Public API for GEPA Logger v2.2.
+
+This module provides user-friendly functions for setting up GEPA logging
+using the public hooks architecture.
+
+Example usage:
+
+    from dspy_gepa_logger import create_logged_gepa, configure_dspy_logging
+
+    # Create GEPA with logging
+    gepa, tracker, logged_metric = create_logged_gepa(
+        metric=my_metric,
+        num_candidates=3,
+        num_iterations=5,
+        # Any other GEPA kwargs...
+    )
+
+    # Configure DSPy with LM logging
+    configure_dspy_logging(tracker)
+
+    # Run optimization
+    result = gepa.compile(student, trainset=train, valset=val)
+
+    # Access captured data
+    print(tracker.get_summary())
+    for eval in tracker.evaluations:
+        print(f"{eval.example_id}: {eval.score}")
+"""
+
+from typing import Any, Callable
+
+from .core.tracker_v2 import GEPATracker
+from .core.logged_metric import LoggedMetric
+from .core.logged_proposer import LoggedInstructionProposer, LoggedSelector
+
+
+def create_logged_gepa(
+    metric: Callable[..., Any],
+    *,
+    capture_lm_calls: bool = True,
+    capture_prediction: bool = True,
+    wrap_proposer: bool = False,
+    base_proposer: Any | None = None,
+    wrap_selector: bool = False,
+    base_selector: Any | None = None,
+    gepa_kwargs: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> tuple[Any, GEPATracker, LoggedMetric]:
+    """Create a GEPA optimizer with logging configured.
+
+    This is the main entry point for using GEPA with comprehensive logging.
+    It returns a configured GEPA instance along with the tracker and logged metric.
+
+    Args:
+        metric: The metric function for evaluation
+        capture_lm_calls: Whether to capture LM calls (default: True)
+        capture_prediction: Whether to capture predictions (default: True)
+        wrap_proposer: Whether to wrap the instruction proposer (default: False)
+        base_proposer: Custom instruction proposer to wrap (if wrap_proposer=True)
+        wrap_selector: Whether to wrap the selector (default: False)
+        base_selector: Custom selector to wrap (if wrap_selector=True)
+        gepa_kwargs: Additional kwargs for GEPA's gepa_kwargs parameter
+        **kwargs: Additional kwargs passed to GEPA constructor
+
+    Returns:
+        Tuple of (gepa, tracker, logged_metric):
+        - gepa: Configured GEPA optimizer instance
+        - tracker: GEPATracker with all logging hooks
+        - logged_metric: The wrapped metric (same as passed to GEPA)
+
+    Example:
+        gepa, tracker, logged_metric = create_logged_gepa(
+            metric=my_metric,
+            num_candidates=3,
+            num_iterations=5,
+        )
+
+        configure_dspy_logging(tracker)
+        result = gepa.compile(student, trainset=train, valset=val)
+        print(tracker.get_summary())
+    """
+    try:
+        from dspy.teleprompt import GEPA
+    except ImportError:
+        raise ImportError(
+            "DSPy is required to use create_logged_gepa. "
+            "Install it with: pip install dspy"
+        )
+
+    # Create tracker
+    tracker = GEPATracker(capture_lm_calls=capture_lm_calls)
+
+    # Wrap metric
+    logged_metric = tracker.wrap_metric(
+        metric,
+        capture_prediction=capture_prediction,
+    )
+
+    # Build gepa_kwargs with stop_callback
+    final_gepa_kwargs = dict(gepa_kwargs or {})
+
+    # Merge stop_callbacks without double-nesting
+    existing_stop_callbacks = final_gepa_kwargs.get("stop_callbacks", [])
+    if not isinstance(existing_stop_callbacks, list):
+        existing_stop_callbacks = [existing_stop_callbacks]
+    final_gepa_kwargs["stop_callbacks"] = existing_stop_callbacks + [
+        tracker.get_stop_callback()
+    ]
+
+    # Handle proposer wrapping
+    if wrap_proposer:
+        if base_proposer is None:
+            from dspy.teleprompt.gepa import DefaultInstructionProposer
+
+            base_proposer = DefaultInstructionProposer()
+        kwargs["instruction_proposer"] = tracker.wrap_proposer(base_proposer)
+
+    # Handle selector wrapping
+    if wrap_selector:
+        if base_selector is None:
+            # Use default selector if none provided
+            from dspy.teleprompt.gepa import DefaultSelector
+
+            base_selector = DefaultSelector()
+        kwargs["selector"] = tracker.wrap_selector(base_selector)
+
+    # Create GEPA with merged kwargs
+    gepa = GEPA(
+        metric=logged_metric,
+        gepa_kwargs=final_gepa_kwargs,
+        **kwargs,
+    )
+
+    return gepa, tracker, logged_metric
+
+
+def configure_dspy_logging(tracker: GEPATracker) -> None:
+    """Configure DSPy to use the tracker's LM callbacks.
+
+    This registers the tracker's LM logger with DSPy so all LM calls
+    are captured with context tags (iteration, phase, candidate_idx).
+
+    Must be called before running GEPA optimization.
+
+    Args:
+        tracker: The GEPATracker instance
+
+    Example:
+        tracker = GEPATracker()
+        configure_dspy_logging(tracker)
+
+        # Now all LM calls will be captured
+        gepa.compile(...)
+    """
+    try:
+        import dspy
+    except ImportError:
+        raise ImportError(
+            "DSPy is required to use configure_dspy_logging. "
+            "Install it with: pip install dspy"
+        )
+
+    callbacks = tracker.get_dspy_callbacks()
+    if callbacks:
+        existing = dspy.settings.get("callbacks", [])
+        dspy.configure(callbacks=existing + callbacks)
+
+
+def create_tracker(
+    capture_lm_calls: bool = True,
+    dspy_version: str | None = None,
+    gepa_version: str | None = None,
+) -> GEPATracker:
+    """Create a standalone GEPATracker.
+
+    Use this when you want more control over how the tracker is configured.
+
+    Args:
+        capture_lm_calls: Whether to capture LM calls (default: True)
+        dspy_version: DSPy version (for compatibility info)
+        gepa_version: GEPA version (for compatibility info)
+
+    Returns:
+        GEPATracker instance
+
+    Example:
+        tracker = create_tracker()
+
+        # Manually wrap components
+        logged_metric = tracker.wrap_metric(my_metric)
+
+        # Set up GEPA manually
+        gepa = GEPA(
+            metric=logged_metric,
+            gepa_kwargs={'stop_callbacks': [tracker.get_stop_callback()]},
+        )
+
+        configure_dspy_logging(tracker)
+    """
+    return GEPATracker(
+        capture_lm_calls=capture_lm_calls,
+        dspy_version=dspy_version,
+        gepa_version=gepa_version,
+    )
+
+
+def wrap_metric(
+    metric: Callable[..., Any],
+    capture_prediction: bool = True,
+    max_prediction_preview: int = 200,
+) -> LoggedMetric:
+    """Create a standalone LoggedMetric wrapper.
+
+    Use this when you want to wrap a metric without using the full tracker.
+
+    Args:
+        metric: The metric function to wrap
+        capture_prediction: Whether to capture predictions (default: True)
+        max_prediction_preview: Max length for prediction preview
+
+    Returns:
+        LoggedMetric wrapper
+
+    Example:
+        logged_metric = wrap_metric(my_metric)
+        result = logged_metric(example, prediction)
+        print(f"Score: {logged_metric.evaluations[-1].score}")
+    """
+    return LoggedMetric(
+        metric_fn=metric,
+        capture_prediction=capture_prediction,
+        max_prediction_preview=max_prediction_preview,
+    )
+
+
+def wrap_proposer(proposer: Any) -> LoggedInstructionProposer:
+    """Create a standalone LoggedInstructionProposer wrapper.
+
+    Use this when you want to wrap a proposer without using the full tracker.
+
+    Args:
+        proposer: The instruction proposer to wrap
+
+    Returns:
+        LoggedInstructionProposer wrapper
+    """
+    return LoggedInstructionProposer(proposer)
+
+
+def wrap_selector(selector: Any) -> LoggedSelector:
+    """Create a standalone LoggedSelector wrapper.
+
+    Use this when you want to wrap a selector without using the full tracker.
+
+    Args:
+        selector: The selector to wrap
+
+    Returns:
+        LoggedSelector wrapper
+    """
+    return LoggedSelector(selector)
