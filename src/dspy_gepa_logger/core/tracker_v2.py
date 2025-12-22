@@ -727,6 +727,421 @@ class GEPATracker:
             "total_candidates": len(self.final_candidates),
         }
 
+    def export_html(
+        self,
+        output_path: str | None = None,
+        title: str = "GEPA Optimization Report",
+    ) -> str:
+        """Generate an HTML report of the optimization run.
+
+        Works in both CLI and Jupyter notebooks:
+        - If output_path is provided, writes to file and returns the path
+        - If output_path is None, returns HTML string (for notebook display)
+
+        For Jupyter notebooks, use:
+            from IPython.display import HTML, display
+            display(HTML(tracker.export_html()))
+
+        Args:
+            output_path: Optional path to write HTML file
+            title: Report title
+
+        Returns:
+            HTML string if output_path is None, otherwise the output path
+        """
+        import html
+        from datetime import datetime
+
+        report = self.get_optimization_report()
+        summary = report["summary"]
+        state = summary.get("state", {})
+        lm_summary = summary.get("lm_calls", {})
+        eval_summary = summary.get("evaluations", {})
+
+        # Build candidate cards
+        candidates_html = ""
+        for idx, candidate in enumerate(self.final_candidates):
+            is_seed = idx == report["seed_idx"]
+            is_best = idx == report["optimized_idx"]
+            badge = ""
+            if is_seed:
+                badge = '<span class="badge badge-seed">SEED</span>'
+            if is_best:
+                badge += '<span class="badge badge-best">BEST</span>'
+
+            prompts_html = ""
+            for key, val in candidate.items():
+                escaped_val = html.escape(val).replace("\n", "<br>")
+                prompts_html += f"""
+                <div class="prompt-section">
+                    <div class="prompt-key">{html.escape(key)}</div>
+                    <div class="prompt-value">{escaped_val}</div>
+                </div>
+                """
+
+            candidates_html += f"""
+            <div class="candidate-card" id="candidate-{idx}">
+                <div class="candidate-header">
+                    <span class="candidate-idx">Candidate {idx}</span>
+                    {badge}
+                </div>
+                <div class="candidate-body">
+                    {prompts_html}
+                </div>
+            </div>
+            """
+
+        # Build lineage visualization
+        lineage = report.get("lineage", [])
+        lineage_html = " → ".join(
+            f'<a href="#candidate-{i}" class="lineage-link">{i}</a>'
+            for i in reversed(lineage)
+        )
+
+        # Build prompt diff
+        diff_html = ""
+        for key, (old_val, new_val) in report.get("prompt_changes", {}).items():
+            escaped_old = html.escape(old_val).replace("\n", "<br>")
+            escaped_new = html.escape(new_val).replace("\n", "<br>")
+            diff_html += f"""
+            <div class="diff-section">
+                <h4>{html.escape(key)}</h4>
+                <div class="diff-container">
+                    <div class="diff-panel diff-old">
+                        <div class="diff-label">❌ Original (Candidate {report['seed_idx']})</div>
+                        <div class="diff-content">{escaped_old}</div>
+                    </div>
+                    <div class="diff-panel diff-new">
+                        <div class="diff-label">✅ Optimized (Candidate {report['optimized_idx']})</div>
+                        <div class="diff-content">{escaped_new}</div>
+                    </div>
+                </div>
+            </div>
+            """
+
+        # Phase breakdown
+        phases = lm_summary.get("calls_by_phase", {})
+        phase_rows = "".join(
+            f"<tr><td>{html.escape(str(phase))}</td><td>{count}</td></tr>"
+            for phase, count in phases.items()
+        )
+
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{html.escape(title)}</title>
+    <style>
+        :root {{
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border-color: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-purple: #a371f7;
+            --accent-orange: #d29922;
+        }}
+
+        * {{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            padding: 2rem;
+        }}
+
+        .container {{
+            max-width: 1400px;
+            margin: 0 auto;
+        }}
+
+        h1 {{
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }}
+
+        h2 {{
+            font-size: 1.5rem;
+            margin: 2rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }}
+
+        h3 {{
+            font-size: 1.25rem;
+            margin: 1.5rem 0 1rem;
+            color: var(--text-primary);
+        }}
+
+        h4 {{
+            font-size: 1rem;
+            margin: 1rem 0 0.5rem;
+            color: var(--accent-blue);
+        }}
+
+        .timestamp {{
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 2rem;
+        }}
+
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }}
+
+        .stat-card {{
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+        }}
+
+        .stat-value {{
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--accent-blue);
+        }}
+
+        .stat-label {{
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }}
+
+        .lineage-box {{
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            font-size: 1.25rem;
+            text-align: center;
+        }}
+
+        .lineage-link {{
+            color: var(--accent-purple);
+            text-decoration: none;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }}
+
+        .lineage-link:hover {{
+            background: var(--bg-tertiary);
+        }}
+
+        .diff-section {{
+            margin: 1.5rem 0;
+        }}
+
+        .diff-container {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }}
+
+        .diff-panel {{
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }}
+
+        .diff-label {{
+            padding: 0.75rem 1rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+        }}
+
+        .diff-old .diff-label {{
+            background: rgba(248, 81, 73, 0.1);
+            color: var(--accent-red);
+        }}
+
+        .diff-new .diff-label {{
+            background: rgba(63, 185, 80, 0.1);
+            color: var(--accent-green);
+        }}
+
+        .diff-content {{
+            padding: 1rem;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }}
+
+        .candidate-card {{
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin: 1rem 0;
+            overflow: hidden;
+        }}
+
+        .candidate-header {{
+            padding: 0.75rem 1rem;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }}
+
+        .candidate-idx {{
+            font-weight: 600;
+        }}
+
+        .badge {{
+            font-size: 0.75rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 12px;
+            font-weight: 600;
+        }}
+
+        .badge-seed {{
+            background: var(--accent-orange);
+            color: var(--bg-primary);
+        }}
+
+        .badge-best {{
+            background: var(--accent-green);
+            color: var(--bg-primary);
+        }}
+
+        .candidate-body {{
+            padding: 1rem;
+        }}
+
+        .prompt-section {{
+            margin: 0.5rem 0;
+        }}
+
+        .prompt-key {{
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 0.25rem;
+        }}
+
+        .prompt-value {{
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.875rem;
+            background: var(--bg-tertiary);
+            padding: 0.75rem;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }}
+
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }}
+
+        th, td {{
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }}
+
+        th {{
+            background: var(--bg-tertiary);
+            font-weight: 600;
+        }}
+
+        tr:hover {{
+            background: var(--bg-secondary);
+        }}
+
+        .section {{
+            margin: 2rem 0;
+        }}
+
+        @media (max-width: 768px) {{
+            .diff-container {{
+                grid-template-columns: 1fr;
+            }}
+
+            .stats-grid {{
+                grid-template-columns: 1fr 1fr;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 {html.escape(title)}</h1>
+        <div class="timestamp">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+
+        <div class="section">
+            <h2>📊 Summary</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">{state.get('total_iterations', 0)}</div>
+                    <div class="stat-label">Iterations</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{state.get('total_candidates', 0)}</div>
+                    <div class="stat-label">Candidates</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{lm_summary.get('total_calls', 0)}</div>
+                    <div class="stat-label">LM Calls</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{eval_summary.get('total_evaluations', 0)}</div>
+                    <div class="stat-label">Evaluations</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🧬 Lineage</h2>
+            <div class="lineage-box">
+                {lineage_html if lineage_html else "No lineage data"}
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🔄 Prompt Changes</h2>
+            {diff_html if diff_html else "<p>No prompt changes detected.</p>"}
+        </div>
+
+        {"<div class='section'><h2>📞 LM Calls by Phase</h2><table><thead><tr><th>Phase</th><th>Count</th></tr></thead><tbody>" + phase_rows + "</tbody></table></div>" if phase_rows else ""}
+
+        <div class="section">
+            <h2>📝 All Candidates</h2>
+            {candidates_html}
+        </div>
+    </div>
+</body>
+</html>"""
+
+        if output_path:
+            with open(output_path, "w") as f:
+                f.write(html_content)
+            return output_path
+
+        return html_content
+
     # ==================== Lifecycle ====================
 
     def clear(self) -> None:

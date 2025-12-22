@@ -109,6 +109,14 @@ def main():
     print(f"\nOptimization evolved through {report['total_candidates']} candidates")
     print(f"Lineage: {' → '.join(str(i) for i in reversed(report['lineage']))}")
 
+    # Export HTML report
+    html_path = tracker.export_html("optimization_report.html")
+    print(f"\nHTML report saved to: {html_path}")
+
+    # For Jupyter notebooks, you can display inline:
+    # from IPython.display import HTML, display
+    # display(HTML(tracker.export_html()))
+
     print("\n" + "=" * 60)
     print("Done!")
     print("=" * 60)
