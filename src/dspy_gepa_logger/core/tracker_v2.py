@@ -576,6 +576,157 @@ class GEPATracker:
             return []
         return self.metric_logger.evaluations
 
+    # ==================== Visualization ====================
+
+    def print_prompt_diff(
+        self,
+        from_idx: int | None = None,
+        to_idx: int | None = None,
+        show_full: bool = False,
+        max_width: int = 80,
+    ) -> None:
+        """Print a formatted diff between original and optimized prompts.
+
+        Args:
+            from_idx: Source candidate index (default: seed)
+            to_idx: Target candidate index (default: best/last)
+            show_full: Show full prompt text (default: truncated)
+            max_width: Max width for each column
+        """
+        if from_idx is None:
+            from_idx = self.seed_candidate_idx or 0
+        if to_idx is None:
+            to_idx = len(self.final_candidates) - 1 if self.final_candidates else 0
+
+        if from_idx == to_idx:
+            print("No changes - same candidate")
+            return
+
+        diff = self.get_candidate_diff(from_idx, to_idx)
+        lineage_str = " → ".join(str(i) for i in reversed(diff.lineage))
+
+        print("\n" + "=" * 70)
+        print("PROMPT COMPARISON")
+        print("=" * 70)
+        print(f"From: Candidate {from_idx} (seed)" if from_idx == self.seed_candidate_idx else f"From: Candidate {from_idx}")
+        print(f"To:   Candidate {to_idx} (optimized)")
+        print(f"Lineage: {lineage_str}")
+        print("=" * 70)
+
+        if not diff.prompt_changes:
+            print("\nNo prompt changes detected.")
+            return
+
+        for key, (old_val, new_val) in diff.prompt_changes.items():
+            print(f"\n📝 {key}")
+            print("-" * 70)
+
+            # Format old value
+            print("\n❌ ORIGINAL:")
+            self._print_wrapped(old_val, max_width, show_full)
+
+            # Format new value
+            print("\n✅ OPTIMIZED:")
+            self._print_wrapped(new_val, max_width, show_full)
+
+        print("\n" + "=" * 70)
+
+    def _print_wrapped(self, text: str, max_width: int, show_full: bool) -> None:
+        """Print text with word wrapping."""
+        if not text:
+            print("   (empty)")
+            return
+
+        # Truncate if needed
+        if not show_full and len(text) > 500:
+            text = text[:500] + "...\n   [truncated - use show_full=True to see all]"
+
+        # Word wrap
+        import textwrap
+        wrapped = textwrap.fill(text, width=max_width, initial_indent="   ", subsequent_indent="   ")
+        print(wrapped)
+
+    def print_summary(self) -> None:
+        """Print a formatted summary of the optimization run."""
+        summary = self.get_summary()
+
+        print("\n" + "=" * 60)
+        print("GEPA OPTIMIZATION SUMMARY")
+        print("=" * 60)
+
+        # State summary
+        state = summary.get("state", {})
+        print(f"\n📊 State:")
+        print(f"   Iterations:     {state.get('total_iterations', 0)}")
+        print(f"   Candidates:     {state.get('total_candidates', 0)}")
+        print(f"   Evaluations:    {state.get('total_evaluations', 0)}")
+        duration = state.get('duration_seconds')
+        if duration:
+            print(f"   Duration:       {duration:.1f}s")
+
+        # LM calls
+        lm = summary.get("lm_calls", {})
+        if lm:
+            print(f"\n🤖 LM Calls:")
+            print(f"   Total:          {lm.get('total_calls', 0)}")
+            print(f"   Duration:       {lm.get('total_duration_ms', 0):.0f}ms")
+            phases = lm.get('calls_by_phase', {})
+            if phases:
+                phase_str = ", ".join(f"{k}: {v}" for k, v in phases.items())
+                print(f"   By Phase:       {phase_str}")
+
+        # Evaluations
+        evals = summary.get("evaluations", {})
+        if evals:
+            print(f"\n📋 Evaluations:")
+            print(f"   Total:          {evals.get('total_evaluations', 0)}")
+            print(f"   Unique Examples: {evals.get('unique_examples', 0)}")
+
+        # Candidates
+        if self.final_candidates:
+            print(f"\n🎯 Candidates:")
+            print(f"   Seed (idx {self.seed_candidate_idx}):")
+            if self.seed_candidate:
+                for key, val in self.seed_candidate.items():
+                    truncated = val[:60] + "..." if len(val) > 60 else val
+                    print(f"      {key}: {truncated}")
+
+            best_idx = len(self.final_candidates) - 1
+            if best_idx != self.seed_candidate_idx:
+                print(f"   Best (idx {best_idx}):")
+                for key, val in self.final_candidates[best_idx].items():
+                    truncated = val[:60] + "..." if len(val) > 60 else val
+                    print(f"      {key}: {truncated}")
+
+        print("\n" + "=" * 60)
+
+    def get_optimization_report(self) -> dict[str, Any]:
+        """Get a structured optimization report.
+
+        Returns:
+            Dict with:
+            - summary: Overall statistics
+            - seed_prompt: Original prompt(s)
+            - optimized_prompt: Best prompt(s)
+            - prompt_changes: What changed
+            - lineage: Evolution path
+        """
+        seed_idx = self.seed_candidate_idx or 0
+        best_idx = len(self.final_candidates) - 1 if self.final_candidates else 0
+
+        diff = self.get_candidate_diff(seed_idx, best_idx)
+
+        return {
+            "summary": self.get_summary(),
+            "seed_prompt": self.seed_candidate,
+            "seed_idx": seed_idx,
+            "optimized_prompt": self.final_candidates[best_idx] if self.final_candidates else None,
+            "optimized_idx": best_idx,
+            "prompt_changes": diff.prompt_changes,
+            "lineage": diff.lineage,
+            "total_candidates": len(self.final_candidates),
+        }
+
     # ==================== Lifecycle ====================
 
     def clear(self) -> None:

@@ -1,68 +1,51 @@
-"""Core tracking infrastructure."""
+"""Core tracking infrastructure for GEPA logging."""
 
-from pathlib import Path
-from dspy_gepa_logger.core.config import TrackerConfig
-from dspy_gepa_logger.core.tracker import GEPARunTracker
-from dspy_gepa_logger.storage.sqlite_adapter import SQLiteStorageAdapter
-
-# v2.2 components (public hooks architecture)
+# Context utilities
 from dspy_gepa_logger.core.context import set_ctx, get_ctx, clear_ctx, with_ctx
+
+# Metric logging
 from dspy_gepa_logger.core.logged_metric import LoggedMetric, EvaluationRecord
+
+# LM call logging
 from dspy_gepa_logger.core.lm_logger import DSPyLMLogger, LMCall
+
+# State logging
 from dspy_gepa_logger.core.state_logger import GEPAStateLogger, IterationDelta, IterationMetadata
+
+# Proposer/selector logging
 from dspy_gepa_logger.core.logged_proposer import (
     LoggedInstructionProposer,
     LoggedSelector,
     ReflectionCall,
     ProposalCall,
 )
+
+# Unified tracker
 from dspy_gepa_logger.core.tracker_v2 import GEPATracker, CandidateDiff
 
 
-def create_sqlite_tracker(db_path: str | Path = "./gepa_runs.db") -> GEPARunTracker:
-    """Create a GEPA tracker with SQLite storage.
-
-    Args:
-        db_path: Path to SQLite database file
-
-    Returns:
-        GEPARunTracker configured with SQLite storage
-
-    Example:
-        tracker = create_sqlite_tracker("./runs.db")
-        with tracker.track():
-            optimized = gepa.compile(student=program, trainset=train, valset=val)
-    """
-    storage = SQLiteStorageAdapter(db_path)
-    return GEPARunTracker(storage=storage)
-
-
 __all__ = [
-    # v1 (legacy)
-    "TrackerConfig",
-    "GEPARunTracker",
-    "create_sqlite_tracker",
-    # v2.2 context
+    # Context
     "set_ctx",
     "get_ctx",
     "clear_ctx",
     "with_ctx",
-    # v2.2 metric
+    # Metric
     "LoggedMetric",
     "EvaluationRecord",
-    # v2.2 LM logger
+    # LM logger
     "DSPyLMLogger",
     "LMCall",
-    # v2.2 state logger
+    # State logger
     "GEPAStateLogger",
     "IterationDelta",
     "IterationMetadata",
-    # v2.2 proposer
+    # Proposer
     "LoggedInstructionProposer",
     "LoggedSelector",
     "ReflectionCall",
     "ProposalCall",
-    # v2.2 unified tracker
+    # Tracker
     "GEPATracker",
     "CandidateDiff",
 ]
