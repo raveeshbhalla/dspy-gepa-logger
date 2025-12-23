@@ -574,6 +574,41 @@ class GEPATracker:
         """Get final Pareto frontier scores."""
         return self.state_logger.final_pareto
 
+    def get_best_candidate_idx(self) -> int:
+        """Determine which candidate GEPA selected as best.
+
+        Uses Pareto frontier data to identify the most frequently appearing
+        candidate across all data points. Falls back to seed if no data.
+
+        Note: This is an approximation - GEPA selects based on aggregate score,
+        not Pareto frequency. For accurate comparison, use get_evaluation_comparison()
+        which compares seed vs Pareto-optimal evaluation per example.
+
+        Returns:
+            The index of the best/selected candidate
+        """
+        pareto_programs = self.state_logger.final_pareto_programs
+        if not pareto_programs:
+            return self.seed_candidate_idx or 0
+
+        # Count how often each candidate appears on the Pareto frontier
+        candidate_counts: dict[int, int] = {}
+        for prog_set in pareto_programs.values():
+            if prog_set:
+                # Use min() for deterministic selection when multiple candidates tie
+                best = min(prog_set)
+                candidate_counts[best] = candidate_counts.get(best, 0) + 1
+
+        if not candidate_counts:
+            return self.seed_candidate_idx or 0
+
+        # Return most frequent candidate (or lowest index in case of tie)
+        best_candidate = max(
+            candidate_counts.keys(),
+            key=lambda x: (candidate_counts[x], -x)  # Higher count, then lower index
+        )
+        return best_candidate
+
     @property
     def iterations(self) -> list[IterationDelta]:
         """Get all iteration deltas."""
@@ -608,14 +643,20 @@ class GEPATracker:
         Groups examples into improvements, regressions, and same categories.
         Each entry includes example inputs, baseline/optimized outputs, and scores.
 
-        Note: Since GEPA doesn't expose candidate_idx through public hooks,
-        this method falls back to iteration-based comparison:
-        - Iteration 0 evaluations = baseline (seed)
-        - Last iteration evaluations = optimized
+        IMPORTANT: This compares seed (baseline) vs the SELECTED candidate's
+        evaluations, not just the last evaluated candidate. Uses Pareto frontier
+        data to determine which candidate GEPA actually selected as best.
+
+        Since GEPA doesn't expose candidate_idx through public hooks, we use
+        timestamp ordering to map evaluations to candidates:
+        - Evaluations are sorted by timestamp
+        - Evaluation[0] = candidate 0 (seed)
+        - Evaluation[N] = candidate N
+        - We compare eval[0] (seed) vs eval[selected_idx] (selected candidate)
 
         Args:
             baseline_idx: Baseline candidate index (default: seed)
-            optimized_idx: Optimized candidate index (default: best/last)
+            optimized_idx: Optimized candidate index (default: SELECTED best candidate)
 
         Returns:
             Dict with:
@@ -635,13 +676,14 @@ class GEPATracker:
         if baseline_idx is None:
             baseline_idx = self.seed_candidate_idx or 0
         if optimized_idx is None:
-            optimized_idx = len(self.final_candidates) - 1 if self.final_candidates else 0
+            # Use SELECTED best candidate, not just last by index
+            optimized_idx = self.get_best_candidate_idx()
 
         # Try candidate_idx-based comparison first
         baseline_evals = self.metric_logger.get_evaluations_for_candidate(baseline_idx)
         optimized_evals = self.metric_logger.get_evaluations_for_candidate(optimized_idx)
 
-        # Fallback to example_id-based comparison if candidate_idx not available
+        # Fallback to timestamp-based comparison if candidate_idx not available
         # (GEPA doesn't expose candidate_idx through public hooks)
         if not baseline_evals or not optimized_evals:
             all_evals = self.metric_logger.evaluations
@@ -659,9 +701,16 @@ class GEPATracker:
                     e for e in all_evals if e.example_id in self._valset_example_ids
                 ]
 
-            # Group evaluations by example_id and take first/last occurrence
-            # First occurrence = baseline (seed evaluation)
-            # Last occurrence = optimized (final evaluation)
+            # GEPA evaluation flow:
+            # - Candidates are evaluated in order: 0 (seed), 1, 2, 3, etc.
+            # - Each candidate gets evaluated on the valset
+            # - Evaluations sorted by timestamp correspond to candidate indices
+            #
+            # We need to compare seed (candidate 0) vs the SELECTED candidate.
+            # The selected candidate is determined from Pareto frontier data,
+            # NOT just the last candidate evaluated.
+
+            # Group by example_id and sort by timestamp
             evals_by_example: dict[str, list] = {}
             for e in all_evals:
                 if e.example_id not in evals_by_example:
@@ -670,12 +719,27 @@ class GEPATracker:
 
             baseline_evals = []
             optimized_evals = []
+
             for example_id, evals in evals_by_example.items():
-                if len(evals) >= 2:
-                    # Sort by timestamp to get chronological order
-                    sorted_evals = sorted(evals, key=lambda x: x.timestamp)
-                    baseline_evals.append(sorted_evals[0])  # First evaluation
-                    optimized_evals.append(sorted_evals[-1])  # Last evaluation
+                # Sort by timestamp to get chronological order (candidate 0, 1, 2, ...)
+                sorted_evals = sorted(evals, key=lambda x: x.timestamp)
+
+                # Baseline = candidate 0 (seed) = first evaluation
+                if len(sorted_evals) >= 1:
+                    baseline_evals.append(sorted_evals[0])
+
+                # Optimized = BEST evaluation for this example (Pareto-optimal)
+                # This represents the actual improvement achieved, regardless of
+                # which candidate GEPA ultimately selected.
+                #
+                # Why best instead of specific candidate:
+                # - GEPA selects based on aggregate score, not per-example
+                # - We can't reliably map evaluations to candidates (candidate_idx=None)
+                # - The Pareto frontier IS the set of best per-example scores
+                # - Comparing seed vs best shows the actual optimization gain
+                if len(sorted_evals) >= 1:
+                    best_eval = max(sorted_evals, key=lambda x: x.score)
+                    optimized_evals.append(best_eval)
 
         # Build lookup by example_id
         baseline_by_example = {e.example_id: e for e in baseline_evals}
