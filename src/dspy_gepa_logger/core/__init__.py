@@ -1,25 +1,51 @@
-"""Core tracking infrastructure."""
+"""Core tracking infrastructure for GEPA logging."""
 
-from pathlib import Path
-from dspy_gepa_logger.core.config import TrackerConfig
-from dspy_gepa_logger.core.tracker import GEPARunTracker
-from dspy_gepa_logger.storage.sqlite_adapter import SQLiteStorageAdapter
+# Context utilities
+from dspy_gepa_logger.core.context import set_ctx, get_ctx, clear_ctx, with_ctx
 
-def create_sqlite_tracker(db_path: str | Path = "./gepa_runs.db") -> GEPARunTracker:
-    """Create a GEPA tracker with SQLite storage.
+# Metric logging
+from dspy_gepa_logger.core.logged_metric import LoggedMetric, EvaluationRecord
 
-    Args:
-        db_path: Path to SQLite database file
+# LM call logging
+from dspy_gepa_logger.core.lm_logger import DSPyLMLogger, LMCall
 
-    Returns:
-        GEPARunTracker configured with SQLite storage
+# State logging
+from dspy_gepa_logger.core.state_logger import GEPAStateLogger, IterationDelta, IterationMetadata
 
-    Example:
-        tracker = create_sqlite_tracker("./runs.db")
-        with tracker.track():
-            optimized = gepa.compile(student=program, trainset=train, valset=val)
-    """
-    storage = SQLiteStorageAdapter(db_path)
-    return GEPARunTracker(storage=storage)
+# Proposer/selector logging
+from dspy_gepa_logger.core.logged_proposer import (
+    LoggedInstructionProposer,
+    LoggedSelector,
+    ReflectionCall,
+    ProposalCall,
+)
 
-__all__ = ["TrackerConfig", "GEPARunTracker", "create_sqlite_tracker"]
+# Unified tracker
+from dspy_gepa_logger.core.tracker_v2 import GEPATracker, CandidateDiff
+
+
+__all__ = [
+    # Context
+    "set_ctx",
+    "get_ctx",
+    "clear_ctx",
+    "with_ctx",
+    # Metric
+    "LoggedMetric",
+    "EvaluationRecord",
+    # LM logger
+    "DSPyLMLogger",
+    "LMCall",
+    # State logger
+    "GEPAStateLogger",
+    "IterationDelta",
+    "IterationMetadata",
+    # Proposer
+    "LoggedInstructionProposer",
+    "LoggedSelector",
+    "ReflectionCall",
+    "ProposalCall",
+    # Tracker
+    "GEPATracker",
+    "CandidateDiff",
+]

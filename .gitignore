@@ -78,3 +78,6 @@ examples/*.db
 examples/*.log
 examples/logs/
 examples/report.html
+
+customers/
+.DS_Store
