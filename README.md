@@ -1,209 +1,184 @@
 # dspy-gepa-logger
 
-Comprehensive logging and visualization infrastructure for DSPy GEPA optimization runs. Track every iteration, compare baseline vs optimized prompts, and generate beautiful HTML comparison reports.
+Lightweight logging and visualization for DSPy GEPA optimization runs. Track evaluations, compare prompts, and generate HTML reports - all using public hooks (no monkey-patching).
 
 ## Features
 
-- **SQLite Storage**: Normalized database schema for efficient querying and analysis
-- **Automatic Instrumentation**: Hooks into GEPA internals to capture all data automatically
-- **Pareto Frontier Tracking**: Per-task scores and frontier evolution across iterations
-- **HTML Comparison Reports**: Side-by-side comparison of baseline vs optimized outputs
-- **LM Call Capture**: Records all language model calls with tokens and latency
-- **Multiple Export Formats**: JSON, DataFrames, and interactive HTML
+- **Public Hooks Architecture**: Uses DSPy callbacks and GEPA's `stop_callbacks` - no monkey-patching
+- **In-Memory Capture**: Fast, lightweight data capture with no storage backend required
+- **Evaluation Tracking**: Captures scores, feedback, and predictions for each evaluation
+- **LM Call Logging**: Records all language model calls with context tags (eval, reflection, proposal)
+- **HTML Reports**: Dark-themed reports with prompt comparison and performance analysis
+- **Jupyter Support**: Display reports inline in notebooks
 
 ## Installation
-
-### From GitHub
 
 ```bash
 pip install git+https://github.com/raveeshbhalla/dspy-gepa-logger.git
 ```
 
-### From Source
+Or from source:
 
 ```bash
 git clone https://github.com/raveeshbhalla/dspy-gepa-logger.git
 cd dspy-gepa-logger
 pip install -e .
-
-# With dev dependencies
-pip install -e ".[dev]"
 ```
 
 ## Quick Start
 
 ```python
 import dspy
-from dspy.teleprompt import GEPA
-from dspy_gepa_logger import GEPARunTracker
-from dspy_gepa_logger.storage import SQLiteStorageAdapter, SQLiteStorage
-from dspy_gepa_logger.hooks import create_instrumented_gepa, cleanup_instrumented_gepa
+from dspy_gepa_logger import create_logged_gepa, configure_dspy_logging
 
-# Set up DSPy
+# Configure DSPy
 lm = dspy.LM("openai/gpt-4o-mini")
 dspy.configure(lm=lm)
 
-# Create SQLite storage and tracker
-storage = SQLiteStorage("./gepa_runs.db")
-adapter = SQLiteStorageAdapter(storage)
-tracker = GEPARunTracker(storage=adapter)
+# Define your metric (can return score + feedback)
+def my_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+    is_correct = pred.answer.lower() == gold.answer.lower()
+    score = 1.0 if is_correct else 0.0
+    feedback = "Correct!" if is_correct else f"Expected {gold.answer}"
+    return dspy.Prediction(score=score, feedback=feedback)
 
-# Define your program
-class MyProgram(dspy.Module):
-    def __init__(self):
-        self.predict = dspy.Predict("question -> answer")
-
-    def forward(self, question):
-        return self.predict(question=question)
-
-# Define your metric
-def my_metric(example, pred, trace=None):
-    return float(example.answer.lower() in pred.answer.lower())
-
-# Create GEPA optimizer
-gepa = GEPA(
+# Create GEPA with logging
+gepa, tracker, logged_metric = create_logged_gepa(
     metric=my_metric,
-    auto="light",
+    num_threads=4,
+    max_full_evals=3,
 )
 
-# Instrument GEPA for logging
-create_instrumented_gepa(gepa, tracker, log_file="./gepa.log")
+# Enable LM call logging
+configure_dspy_logging(tracker)
 
-# Run optimization with tracking
-tracker.start_run(config={"optimizer": "GEPA", "auto": "light"})
-tracker.register_examples(trainset, valset)
+# Set validation set for performance comparison
+tracker.set_valset(val_data)
 
-try:
-    optimized = gepa.compile(
-        student=MyProgram(),
-        trainset=trainset,
-        valset=valset,
-    )
-finally:
-    cleanup_instrumented_gepa(gepa)
-    tracker.end_run()
+# Run optimization
+optimized = gepa.compile(
+    student=my_program,
+    trainset=train_data,
+    valset=val_data,
+)
 
-# Generate HTML comparison report
-run_id = tracker.current_run.run_id
+# View results
+tracker.print_summary()
+tracker.print_prompt_diff()
+
+# Export HTML report
+tracker.export_html("report.html")
 ```
 
-## Generate HTML Reports
+## API Reference
 
-After running GEPA, generate a comparison report:
+### `create_logged_gepa()`
+
+Factory function that creates a GEPA optimizer with logging enabled.
+
+```python
+gepa, tracker, logged_metric = create_logged_gepa(
+    metric=my_metric,              # Your metric function
+    reflection_lm=None,            # Optional: LM for reflection (defaults to configured LM)
+    num_threads=4,                 # Parallel evaluation threads
+    max_full_evals=3,              # Budget for full evaluations
+    track_stats=True,              # Enable statistics tracking
+    log_dir=None,                  # Optional: directory for GEPA logs
+    # ... other GEPA kwargs
+)
+```
+
+Returns:
+- `gepa`: Configured GEPA optimizer with logging hooks
+- `tracker`: GEPATracker instance for accessing captured data
+- `logged_metric`: Wrapped metric function (already passed to GEPA)
+
+### `GEPATracker`
+
+Main class for accessing optimization data.
+
+#### Visualization Methods
+
+```python
+# Print formatted summary
+tracker.print_summary()
+
+# Print prompt comparison (original vs optimized)
+tracker.print_prompt_diff()
+tracker.print_prompt_diff(show_full=True)  # Show full text, not truncated
+
+# Export HTML report
+tracker.export_html("report.html")
+
+# For Jupyter notebooks
+from IPython.display import HTML, display
+display(HTML(tracker.export_html()))
+```
+
+#### Data Access
+
+```python
+# Get structured report
+report = tracker.get_optimization_report()
+print(f"Candidates: {report['total_candidates']}")
+print(f"Lineage: {report['lineage']}")
+
+# Get evaluation comparison (improvements/regressions)
+comparison = tracker.get_evaluation_comparison()
+print(f"Improvements: {comparison['summary']['num_improvements']}")
+print(f"Regressions: {comparison['summary']['num_regressions']}")
+
+# Access raw data
+tracker.evaluations          # All evaluation records
+tracker.lm_calls             # All LM call records
+tracker.final_candidates     # All candidate prompts
+tracker.get_lineage(idx)     # Trace candidate ancestry
+```
+
+### Metric Functions
+
+Your metric can return scores in several formats:
+
+```python
+# Simple score (float)
+def metric(gold, pred, trace=None):
+    return 1.0 if correct else 0.0
+
+# Score with feedback (tuple)
+def metric(gold, pred, trace=None):
+    return (score, "Feedback text")
+
+# dspy.Prediction with score and feedback
+def metric(gold, pred, trace=None):
+    return dspy.Prediction(score=0.8, feedback="Almost correct")
+```
+
+GEPA metrics use 5 arguments:
+
+```python
+def gepa_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+    return dspy.Prediction(score=score, feedback=feedback)
+```
+
+## HTML Report
+
+The HTML report includes:
+
+- **Summary Statistics**: Iterations, candidates, LM calls, evaluations
+- **Lineage Visualization**: Click to navigate between candidates
+- **Prompt Comparison**: Side-by-side original vs optimized prompts
+- **Performance Comparison**: Tabbed view of improvements, regressions, and unchanged examples
+  - Shows input, baseline/optimized outputs, and score delta
+  - Filterable by validation set
+
+## Example
+
+See `examples/eg_v2_simple.py` for a complete working example:
 
 ```bash
-# Using the CLI
-gepa-report --db ./gepa_runs.db --run-id <RUN_ID> --output report.html
-
-# Or programmatically
-python -m dspy_gepa_logger.export.html_report \
-    --db ./gepa_runs.db \
-    --run-id <RUN_ID> \
-    --output report.html
-```
-
-The report shows:
-- **Summary statistics**: Improvements, regressions, scores
-- **Prompt comparison**: Baseline vs optimized instructions side-by-side
-- **Example comparison**: Click any example to see both outputs with scores
-- **Color coding**: Green for improvements, red for regressions
-
-## Data Captured
-
-For each GEPA iteration, the logger captures:
-
-1. **Parent selection**: Which candidate was selected and why
-2. **Minibatch evaluation**: Inputs, outputs, scores, and feedback
-3. **Reflection**: The reflective LM call with proposed changes
-4. **Candidate evaluation**: New candidate's performance
-5. **Acceptance decision**: Accept/reject with reasoning
-6. **Validation scores**: Full validation set performance
-7. **Pareto frontier**: Per-task best programs and scores
-
-## SQLite Schema
-
-The database uses a normalized schema:
-
-```
-runs              - Run metadata and final scores
-iterations        - Per-iteration data with parent/candidate programs
-programs          - Unique program instructions (deduplicated by hash)
-examples          - Train and validation examples
-rollouts          - Per-example outputs and scores
-reflections       - Reflection LM calls and proposed changes
-lm_calls          - All LM calls with tokens and latency
-pareto_snapshots  - Pareto frontier state per iteration
-pareto_tasks      - Per-task best programs and scores
-```
-
-### Example Queries
-
-```sql
--- Get run summary
-SELECT * FROM run_summary;
-
--- Get iteration history
-SELECT iteration_number, accepted, val_aggregate_score
-FROM iterations WHERE run_id = '<RUN_ID>'
-ORDER BY iteration_number;
-
--- Get Pareto frontier evolution
-SELECT * FROM pareto_snapshots WHERE run_id = '<RUN_ID>';
-
--- Compare baseline vs optimized outputs
-SELECT e.inputs_json,
-       baseline.output_json as baseline_output,
-       optimized.output_json as optimized_output,
-       baseline.score as baseline_score,
-       optimized.score as optimized_score
-FROM examples e
-JOIN rollouts baseline ON e.example_id = baseline.example_id
-JOIN rollouts optimized ON e.example_id = optimized.example_id
-WHERE baseline.program_id = <BASELINE_ID>
-  AND optimized.program_id = <OPTIMIZED_ID>;
-```
-
-## Export to DataFrames
-
-```python
-from dspy_gepa_logger.export import DataFrameExporter
-
-exporter = DataFrameExporter(tracker.storage)
-
-# Get iterations as DataFrame
-iterations_df = exporter.iterations_df(run_id)
-print(iterations_df[['iteration_number', 'accepted', 'val_aggregate_score']])
-
-# Plot optimization progress
-import matplotlib.pyplot as plt
-plt.plot(iterations_df['iteration_number'], iterations_df['val_aggregate_score'])
-plt.xlabel('Iteration')
-plt.ylabel('Validation Score')
-plt.show()
-```
-
-## Export to JSON
-
-```python
-from dspy_gepa_logger.export import JSONExporter
-
-exporter = JSONExporter(storage)
-exporter.export_run(run_id, './exports/run.json', pretty=True)
-```
-
-## Configuration
-
-```python
-from dspy_gepa_logger import TrackerConfig, GEPARunTracker
-
-config = TrackerConfig(
-    capture_traces=True,        # Capture execution traces
-    capture_lm_calls=True,      # Capture LM call details
-    capture_full_inputs=True,   # Store full input data
-    capture_full_outputs=True,  # Store full output data
-)
-
-tracker = GEPARunTracker(storage=adapter, config=config)
+cd examples
+python eg_v2_simple.py
+open optimization_report.html
 ```
 
 ## Architecture
@@ -211,56 +186,29 @@ tracker = GEPARunTracker(storage=adapter, config=config)
 ```
 dspy_gepa_logger/
 ├── core/
-│   ├── tracker.py          # Main GEPARunTracker class
-│   └── config.py           # TrackerConfig
-├── storage/
-│   ├── sqlite_backend.py   # SQLite storage implementation
-│   ├── sqlite_adapter.py   # Adapter for tracker integration
-│   ├── jsonl_backend.py    # JSONL file storage
-│   └── memory_backend.py   # In-memory storage (testing)
-├── hooks/
-│   ├── gepa_adapter.py     # GEPA instrumentation hooks
-│   ├── pareto_tracker.py   # Pareto frontier capture
-│   └── callback_handler.py # DSPy callback integration
-├── models/
-│   ├── run.py              # GEPARunRecord
-│   ├── iteration.py        # IterationRecord
-│   └── ...                 # Other data models
-└── export/
-    ├── html_report.py      # HTML comparison reports
-    ├── json_exporter.py    # JSON export
-    └── dataframe.py        # DataFrame export
+│   ├── tracker_v2.py      # GEPATracker - unified logging interface
+│   ├── logged_metric.py   # LoggedMetric - evaluation capture
+│   ├── state_logger.py    # GEPAStateLogger - iteration state via stop_callbacks
+│   ├── lm_logger.py       # DSPyLMLogger - LM call capture via callbacks
+│   ├── logged_proposer.py # Optional reflection/proposal phase tagging
+│   └── context.py         # Thread-safe context for phase tagging
+└── __init__.py            # Public API exports
 ```
 
-## How It Works
+### How It Works
 
-The logger uses monkey-patching to instrument GEPA without modifying DSPy core:
+1. **LoggedMetric** wraps your metric to capture evaluations with scores and feedback
+2. **GEPAStateLogger** uses GEPA's `stop_callbacks` to capture iteration state incrementally
+3. **DSPyLMLogger** uses DSPy's callback system to capture all LM calls with context tags
+4. **GEPATracker** combines all hooks and provides query/visualization methods
 
-1. **`create_instrumented_gepa()`** patches:
-   - `DspyAdapter.__init__` - Wraps the adapter with instrumented version
-   - `GEPAEngine._run_full_eval_and_add` - Captures validation rollouts
-   - `create_experiment_tracker` - Injects Pareto frontier tracking
-
-2. **InstrumentedDspyAdapter** wraps:
-   - `evaluate()` - Captures minibatch evaluations
-   - `make_reflective_dataset()` - Captures reflection data
-   - `propose_new_texts()` - Captures proposed changes
-
-3. **GEPALoggingCallback** captures:
-   - All LM calls via DSPy's callback system
-   - Token counts, latencies, and model info
+No monkey-patching required - all hooks use public APIs.
 
 ## Requirements
 
 - Python >= 3.10
 - dspy >= 2.5.0
-- gepa >= 0.0.17
-- pandas >= 2.0.0
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! Please open an issue or PR on GitHub.
