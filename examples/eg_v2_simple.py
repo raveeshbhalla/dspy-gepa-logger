@@ -83,6 +83,9 @@ def main():
     # Configure DSPy with LM logging
     configure_dspy_logging(tracker)
 
+    # Set valset for comparison filtering (only compare on validation examples)
+    tracker.set_valset(val_data)
+
     print("\nRunning GEPA optimization...")
     print("-" * 40)
 

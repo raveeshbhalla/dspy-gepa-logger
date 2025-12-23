@@ -113,6 +113,28 @@ class GEPATracker:
         self._wrapped_proposer: Any | None = None
         self._wrapped_selector: Any | None = None
 
+        # Valset example IDs for filtering comparisons
+        self._valset_example_ids: set[str] | None = None
+
+    def set_valset(self, valset: list[Any]) -> None:
+        """Set the validation set for comparison filtering.
+
+        Call this before running GEPA optimization to ensure performance
+        comparisons only include validation examples (not training examples).
+
+        Args:
+            valset: List of validation examples (dspy.Example or similar)
+
+        Example:
+            tracker.set_valset(val_data)
+            result = gepa.compile(student, trainset=train_data, valset=val_data)
+        """
+        from .logged_metric import _deterministic_example_id
+
+        self._valset_example_ids = {
+            _deterministic_example_id(example) for example in valset
+        }
+
     def wrap_metric(
         self,
         metric: Callable[..., Any],
@@ -630,6 +652,12 @@ class GEPATracker:
                     "same": [],
                     "summary": {"error": "No evaluation data available"},
                 }
+
+            # Filter to valset examples only if valset was set
+            if self._valset_example_ids:
+                all_evals = [
+                    e for e in all_evals if e.example_id in self._valset_example_ids
+                ]
 
             # Group evaluations by example_id and take first/last occurrence
             # First occurrence = baseline (seed evaluation)
