@@ -8,7 +8,7 @@ Lightweight logging and visualization for DSPy GEPA optimization runs. Track eva
 - **In-Memory Capture**: Fast, lightweight data capture with no storage backend required
 - **Evaluation Tracking**: Captures scores, feedback, and predictions for each evaluation
 - **LM Call Logging**: Records all language model calls with context tags (eval, reflection, proposal)
-- **HTML Reports**: Dark-themed reports with prompt comparison and performance analysis
+- **Interactive HTML Reports**: Dark-themed reports with prompt comparison, performance analysis, and clickable rows for detailed evaluation view
 - **Jupyter Support**: Display reports inline in notebooks
 
 ## Installation
@@ -169,7 +169,10 @@ The HTML report includes:
 - **Prompt Comparison**: Side-by-side original vs optimized prompts
 - **Performance Comparison**: Tabbed view of improvements, regressions, and unchanged examples
   - Shows input, baseline/optimized outputs, and score delta
+  - **Click any row** to open a modal with full evaluation details
   - Filterable by validation set
+
+![HTML Report Screenshot](docs/report-screenshot.png)
 
 ## Example
 
@@ -208,7 +211,3 @@ No monkey-patching required - all hooks use public APIs.
 
 - Python >= 3.10
 - dspy >= 2.5.0
-
-## License
-
-MIT

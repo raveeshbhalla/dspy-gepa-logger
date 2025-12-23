@@ -30,6 +30,7 @@ Usage:
     print(tracker.get_candidate_diff(0, 5))
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -1072,6 +1073,9 @@ class GEPATracker:
         eval_comparison = self.get_evaluation_comparison()
         eval_comp_summary = eval_comparison.get("summary", {})
 
+        # Store all entries for modal access
+        all_eval_entries: list[dict] = []
+
         def build_eval_table(entries: list, category: str) -> str:
             if not entries:
                 return f'<p class="empty-message">No {category} examples</p>'
@@ -1082,6 +1086,10 @@ class GEPATracker:
             header_cells = "".join(f"<th>{html.escape(f)}</th>" for f in input_fields)
             rows = ""
             for i, entry in enumerate(entries):
+                # Store entry for modal access (with global index)
+                global_idx = len(all_eval_entries)
+                all_eval_entries.append(entry)
+
                 inputs = entry.get("inputs", {})
                 input_cells = "".join(
                     f'<td class="input-cell">{html.escape(str(inputs.get(f, "")))[:100]}</td>'
@@ -1092,7 +1100,7 @@ class GEPATracker:
                 delta_str = f'+{entry["delta"]:.2f}' if entry["delta"] > 0 else f'{entry["delta"]:.2f}'
 
                 rows += f"""
-                <tr>
+                <tr onclick="openModal({global_idx})" title="Click for details">
                     <td class="row-num">{i + 1}</td>
                     {input_cells}
                     <td class="score-cell">{entry["baseline_score"]:.2f}</td>
@@ -1536,6 +1544,245 @@ class GEPATracker:
                 grid-template-columns: 1fr 1fr;
             }}
         }}
+
+        /* Modal styles */
+        .modal-overlay {{
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            overflow-y: auto;
+            padding: 2rem;
+        }}
+
+        .modal-overlay.active {{
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+        }}
+
+        .modal {{
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            max-width: 900px;
+            width: 100%;
+            margin: 2rem auto;
+            position: relative;
+            animation: modalSlideIn 0.2s ease-out;
+        }}
+
+        @keyframes modalSlideIn {{
+            from {{
+                opacity: 0;
+                transform: translateY(-20px);
+            }}
+            to {{
+                opacity: 1;
+                transform: translateY(0);
+            }}
+        }}
+
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+            border-radius: 12px 12px 0 0;
+        }}
+
+        .modal-title {{
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }}
+
+        .modal-close {{
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }}
+
+        .modal-close:hover {{
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }}
+
+        .modal-body {{
+            padding: 1.5rem;
+        }}
+
+        .modal-section {{
+            margin-bottom: 1.5rem;
+        }}
+
+        .modal-section:last-child {{
+            margin-bottom: 0;
+        }}
+
+        .modal-section-title {{
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+        }}
+
+        .modal-score-row {{
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 1rem;
+        }}
+
+        .modal-score-item {{
+            flex: 1;
+            padding: 1rem;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            text-align: center;
+        }}
+
+        .modal-score-value {{
+            font-size: 1.75rem;
+            font-weight: 700;
+        }}
+
+        .modal-score-label {{
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }}
+
+        .modal-content-box {{
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 300px;
+            overflow-y: auto;
+        }}
+
+        .modal-feedback {{
+            background: var(--bg-tertiary);
+            border-left: 3px solid var(--accent-blue);
+            padding: 0.75rem 1rem;
+            font-style: italic;
+            color: var(--text-secondary);
+            border-radius: 0 8px 8px 0;
+        }}
+
+        .modal-inputs {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }}
+
+        .modal-input-item {{
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+        }}
+
+        .modal-input-key {{
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }}
+
+        .modal-input-value {{
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: 0.875rem;
+            word-break: break-word;
+        }}
+
+        .modal-comparison {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }}
+
+        .modal-comparison-panel {{
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            overflow: hidden;
+        }}
+
+        .modal-comparison-header {{
+            padding: 0.75rem 1rem;
+            font-weight: 600;
+            font-size: 0.875rem;
+        }}
+
+        .modal-comparison-header.baseline {{
+            background: rgba(248, 81, 73, 0.1);
+            color: var(--accent-red);
+        }}
+
+        .modal-comparison-header.optimized {{
+            background: rgba(63, 185, 80, 0.1);
+            color: var(--accent-green);
+        }}
+
+        .modal-comparison-content {{
+            padding: 1rem;
+        }}
+
+        .modal-comparison-output {{
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin-bottom: 1rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }}
+
+        .modal-comparison-feedback {{
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-style: italic;
+            border-top: 1px solid var(--border-color);
+            padding-top: 0.75rem;
+        }}
+
+        .eval-table tbody tr {{
+            cursor: pointer;
+            transition: background 0.15s;
+        }}
+
+        .eval-table tbody tr:hover {{
+            background: var(--bg-tertiary) !important;
+        }}
+
+        @media (max-width: 768px) {{
+            .modal-comparison {{
+                grid-template-columns: 1fr;
+            }}
+
+            .modal-score-row {{
+                flex-wrap: wrap;
+            }}
+
+            .modal-score-item {{
+                min-width: 120px;
+            }}
+        }}
     </style>
 </head>
 <body>
@@ -1629,7 +1876,69 @@ class GEPATracker:
         </div>
     </div>
 
+    <!-- Modal for evaluation details -->
+    <div id="evalModal" class="modal-overlay" onclick="if(event.target === this) closeModal()">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title">Evaluation Details</span>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-section">
+                    <div class="modal-section-title">Scores</div>
+                    <div class="modal-score-row">
+                        <div class="modal-score-item">
+                            <div class="modal-score-value" id="modal-baseline-score">-</div>
+                            <div class="modal-score-label">Baseline</div>
+                        </div>
+                        <div class="modal-score-item">
+                            <div class="modal-score-value" id="modal-optimized-score" style="color: var(--accent-green);">-</div>
+                            <div class="modal-score-label">Optimized</div>
+                        </div>
+                        <div class="modal-score-item">
+                            <div class="modal-score-value" id="modal-delta">-</div>
+                            <div class="modal-score-label">Delta</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <div class="modal-section-title">Inputs</div>
+                    <div class="modal-inputs" id="modal-inputs"></div>
+                </div>
+
+                <div class="modal-section">
+                    <div class="modal-section-title">Outputs & Feedback</div>
+                    <div class="modal-comparison">
+                        <div class="modal-comparison-panel">
+                            <div class="modal-comparison-header baseline">Baseline</div>
+                            <div class="modal-comparison-content">
+                                <div class="modal-comparison-output" id="modal-baseline-output"></div>
+                                <div class="modal-comparison-feedback" id="modal-baseline-feedback"></div>
+                            </div>
+                        </div>
+                        <div class="modal-comparison-panel">
+                            <div class="modal-comparison-header optimized">Optimized</div>
+                            <div class="modal-comparison-content">
+                                <div class="modal-comparison-output" id="modal-optimized-output"></div>
+                                <div class="modal-comparison-feedback" id="modal-optimized-feedback"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <div class="modal-section-title">Example ID</div>
+                    <div class="modal-content-box" id="modal-example-id" style="max-height: none; font-size: 0.75rem; color: var(--text-secondary);"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // Evaluation data for modal
+        const evalData = {json.dumps(all_eval_entries, default=str)};
+
         function showTab(tabId) {{
             // Hide all tab contents
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -1640,6 +1949,67 @@ class GEPATracker:
             // Activate clicked tab
             event.target.closest('.tab').classList.add('active');
         }}
+
+        function openModal(index) {{
+            const entry = evalData[index];
+            if (!entry) return;
+
+            // Update scores
+            document.getElementById('modal-baseline-score').textContent = entry.baseline_score.toFixed(2);
+            document.getElementById('modal-optimized-score').textContent = entry.optimized_score.toFixed(2);
+
+            const delta = entry.delta;
+            const deltaEl = document.getElementById('modal-delta');
+            deltaEl.textContent = (delta >= 0 ? '+' : '') + delta.toFixed(2);
+            deltaEl.style.color = delta > 0 ? 'var(--accent-green)' : delta < 0 ? 'var(--accent-red)' : 'var(--text-primary)';
+
+            // Update inputs
+            const inputsContainer = document.getElementById('modal-inputs');
+            inputsContainer.innerHTML = '';
+            const inputs = entry.inputs || {{}};
+            for (const [key, value] of Object.entries(inputs)) {{
+                const item = document.createElement('div');
+                item.className = 'modal-input-item';
+                item.innerHTML = `
+                    <div class="modal-input-key">${{escapeHtml(key)}}</div>
+                    <div class="modal-input-value">${{escapeHtml(String(value))}}</div>
+                `;
+                inputsContainer.appendChild(item);
+            }}
+
+            // Update outputs
+            document.getElementById('modal-baseline-output').textContent = entry.baseline_output || '(no output)';
+            document.getElementById('modal-optimized-output').textContent = entry.optimized_output || '(no output)';
+
+            // Update feedback
+            document.getElementById('modal-baseline-feedback').textContent = entry.baseline_feedback || '(no feedback)';
+            document.getElementById('modal-optimized-feedback').textContent = entry.optimized_feedback || '(no feedback)';
+
+            // Update example ID
+            document.getElementById('modal-example-id').textContent = entry.example_id || '-';
+
+            // Show modal
+            document.getElementById('evalModal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }}
+
+        function closeModal() {{
+            document.getElementById('evalModal').classList.remove('active');
+            document.body.style.overflow = '';
+        }}
+
+        function escapeHtml(text) {{
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }}
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', function(e) {{
+            if (e.key === 'Escape') {{
+                closeModal();
+            }}
+        }});
     </script>
 </body>
 </html>"""
