@@ -586,6 +586,11 @@ class GEPATracker:
         Groups examples into improvements, regressions, and same categories.
         Each entry includes example inputs, baseline/optimized outputs, and scores.
 
+        Note: Since GEPA doesn't expose candidate_idx through public hooks,
+        this method falls back to iteration-based comparison:
+        - Iteration 0 evaluations = baseline (seed)
+        - Last iteration evaluations = optimized
+
         Args:
             baseline_idx: Baseline candidate index (default: seed)
             optimized_idx: Optimized candidate index (default: best/last)
@@ -610,9 +615,39 @@ class GEPATracker:
         if optimized_idx is None:
             optimized_idx = len(self.final_candidates) - 1 if self.final_candidates else 0
 
-        # Get evaluations for both candidates
+        # Try candidate_idx-based comparison first
         baseline_evals = self.metric_logger.get_evaluations_for_candidate(baseline_idx)
         optimized_evals = self.metric_logger.get_evaluations_for_candidate(optimized_idx)
+
+        # Fallback to example_id-based comparison if candidate_idx not available
+        # (GEPA doesn't expose candidate_idx through public hooks)
+        if not baseline_evals or not optimized_evals:
+            all_evals = self.metric_logger.evaluations
+            if not all_evals:
+                return {
+                    "improvements": [],
+                    "regressions": [],
+                    "same": [],
+                    "summary": {"error": "No evaluation data available"},
+                }
+
+            # Group evaluations by example_id and take first/last occurrence
+            # First occurrence = baseline (seed evaluation)
+            # Last occurrence = optimized (final evaluation)
+            evals_by_example: dict[str, list] = {}
+            for e in all_evals:
+                if e.example_id not in evals_by_example:
+                    evals_by_example[e.example_id] = []
+                evals_by_example[e.example_id].append(e)
+
+            baseline_evals = []
+            optimized_evals = []
+            for example_id, evals in evals_by_example.items():
+                if len(evals) >= 2:
+                    # Sort by timestamp to get chronological order
+                    sorted_evals = sorted(evals, key=lambda x: x.timestamp)
+                    baseline_evals.append(sorted_evals[0])  # First evaluation
+                    optimized_evals.append(sorted_evals[-1])  # Last evaluation
 
         # Build lookup by example_id
         baseline_by_example = {e.example_id: e for e in baseline_evals}
