@@ -1,0 +1,129 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  runs        Run[]
+}
+
+model Run {
+  id               String     @id @default(cuid())
+  projectId        String
+  project          Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name             String?
+  status           RunStatus  @default(RUNNING)
+  startedAt        DateTime   @default(now())
+  completedAt      DateTime?
+  config           String?    // JSON stored as string
+  totalIterations  Int        @default(0)
+  totalCandidates  Int        @default(0)
+  totalLmCalls     Int        @default(0)
+  totalEvaluations Int        @default(0)
+  seedPrompt       String?    // JSON stored as string
+  bestPrompt       String?    // JSON stored as string
+  bestCandidateIdx Int?
+  seedScore        Float?
+  bestScore        Float?
+  valsetExampleIds String?    // JSON array of validation set example IDs
+  iterations       Iteration[]
+  evaluations      Evaluation[]
+  lmCalls          LmCall[]
+  candidates       Candidate[]
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  @@index([projectId])
+  @@index([status])
+}
+
+enum RunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Iteration {
+  id              String   @id @default(cuid())
+  runId           String
+  run             Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  iterationNumber Int
+  timestamp       Float
+  totalEvals      Int
+  numCandidates   Int      @default(0)
+  paretoSize      Int      @default(0)
+  paretoFrontier  String?  // JSON stored as string
+  paretoPrograms  String?  // JSON stored as string
+  createdAt       DateTime @default(now())
+
+  @@unique([runId, iterationNumber])
+  @@index([runId])
+}
+
+model Candidate {
+  id           String   @id @default(cuid())
+  runId        String
+  run          Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  candidateIdx Int
+  content      String   // JSON stored as string
+  parentIdx    Int?
+  createdAtIter Int?
+  createdAt    DateTime @default(now())
+
+  @@unique([runId, candidateIdx])
+  @@index([runId])
+}
+
+model Evaluation {
+  id                String   @id @default(cuid())
+  runId             String
+  run               Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  evalId            String
+  exampleId         String
+  candidateIdx      Int?
+  iteration         Int?
+  phase             String
+  score             Float
+  feedback          String?
+  exampleInputs     String?  // JSON stored as string
+  predictionPreview String?
+  predictionRef     String?  // Full JSON of prediction for reconstruction
+  timestamp         Float
+  createdAt         DateTime @default(now())
+
+  @@index([runId])
+  @@index([runId, exampleId])
+  @@index([runId, candidateIdx])
+}
+
+model LmCall {
+  id           String   @id @default(cuid())
+  runId        String
+  run          Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  callId       String
+  model        String?
+  startTime    Float
+  endTime      Float?
+  durationMs   Float?
+  iteration    Int?
+  phase        String?
+  candidateIdx Int?
+  inputs       String?  // JSON stored as string
+  outputs      String?  // JSON stored as string
+  createdAt    DateTime @default(now())
+
+  @@index([runId])
+  @@index([runId, iteration])
+  @@index([runId, phase])
+}

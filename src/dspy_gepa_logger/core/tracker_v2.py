@@ -88,6 +88,8 @@ class GEPATracker:
         capture_lm_calls: bool = True,
         dspy_version: str | None = None,
         gepa_version: str | None = None,
+        server_url: str | None = None,
+        project_name: str = "Default",
     ):
         """Initialize the tracker.
 
@@ -95,6 +97,8 @@ class GEPATracker:
             capture_lm_calls: Whether to capture LM calls (default: True)
             dspy_version: DSPy version (for compatibility info)
             gepa_version: GEPA version (for compatibility info)
+            server_url: Optional URL of GEPA Logger web server for real-time updates
+            project_name: Project name for organizing runs (default: "Default")
         """
         self._start_time: float | None = None
         self._capture_lm_calls = capture_lm_calls
@@ -117,6 +121,19 @@ class GEPATracker:
         # Valset example IDs for filtering comparisons
         self._valset_example_ids: set[str] | None = None
 
+        # Server integration (optional)
+        self._server_client: Any | None = None
+        self._server_url = server_url
+        self._project_name = project_name
+        self._last_pushed_iteration = -1
+        self._last_pushed_eval_count = 0
+        self._last_pushed_lm_count = 0
+        self._eval_push_batch_size = 50
+        self._lm_push_batch_size = 50
+
+        if server_url:
+            self._init_server_client()
+
     def set_valset(self, valset: list[Any]) -> None:
         """Set the validation set for comparison filtering.
 
@@ -135,6 +152,226 @@ class GEPATracker:
         self._valset_example_ids = {
             _deterministic_example_id(example) for example in valset
         }
+
+    # ==================== Server Integration ====================
+
+    def _init_server_client(self) -> None:
+        """Initialize the server client and start a new run."""
+        try:
+            from ..server.client import ServerClient
+
+            self._server_client = ServerClient(
+                server_url=self._server_url,
+                project_name=self._project_name,
+            )
+            logger.info(f"Server client initialized for {self._server_url}")
+        except ImportError:
+            logger.warning("Could not import ServerClient - server integration disabled")
+            self._server_client = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize server client: {e}")
+            self._server_client = None
+
+    def _start_server_run(self, seed_prompt: dict[str, str] | None = None) -> None:
+        """Start a run on the server (called when optimization starts)."""
+        if self._server_client is None:
+            return
+
+        try:
+            # Convert valset example IDs to list for JSON serialization
+            valset_ids = list(self._valset_example_ids) if self._valset_example_ids else None
+
+            run_id = self._server_client.start_run(
+                config={
+                    "dspy_version": self.state_logger.versions.get("dspy"),
+                    "gepa_version": self.state_logger.versions.get("gepa"),
+                    "capture_lm_calls": self._capture_lm_calls,
+                },
+                seed_prompt=seed_prompt,
+                valset_example_ids=valset_ids,
+            )
+            if run_id:
+                logger.info(f"Server run started: {run_id}")
+        except Exception as e:
+            logger.warning(f"Failed to start server run: {e}")
+
+    def _push_to_server(self) -> None:
+        """Push pending data to server (called after each iteration)."""
+        if self._server_client is None or not self._server_client.is_connected:
+            return
+
+        try:
+            self._push_iterations_to_server()
+            self._push_candidates_to_server()
+            self._push_evaluations_to_server()
+            self._push_lm_calls_to_server()
+        except Exception as e:
+            logger.warning(f"Failed to push data to server: {e}")
+
+    def _push_iterations_to_server(self) -> None:
+        """Push new iterations to server."""
+        if self._server_client is None:
+            return
+
+        for meta in self.state_logger.metadata[self._last_pushed_iteration + 1 :]:
+            # Find the corresponding delta for pareto data
+            delta = None
+            for d in self.state_logger.deltas:
+                if d.iteration == meta.iteration:
+                    delta = d
+                    break
+
+            pareto_frontier = None
+            pareto_programs = None
+            if delta:
+                # Convert pareto data to serializable format
+                pareto_frontier = {k: v[0] for k, v in delta.pareto_additions.items()}
+                pareto_programs = {
+                    k: min(v[1]) if v[1] else None
+                    for k, v in delta.pareto_additions.items()
+                }
+
+            self._server_client.push_iteration(
+                iteration_number=meta.iteration,
+                timestamp=meta.timestamp,
+                total_evals=meta.total_evals,
+                num_candidates=meta.num_candidates,
+                pareto_size=meta.pareto_size,
+                pareto_frontier=pareto_frontier,
+                pareto_programs=pareto_programs,
+            )
+            self._last_pushed_iteration = meta.iteration
+
+    def _push_candidates_to_server(self) -> None:
+        """Push new candidates to server."""
+        if self._server_client is None:
+            return
+
+        # Collect all new candidates from deltas
+        candidates_to_push = []
+        for delta in self.state_logger.deltas:
+            for idx, content in delta.new_candidates:
+                # Find parent from lineage
+                parent_idx = None
+                for lin_idx, lineage in delta.new_lineage:
+                    if lin_idx == idx and lineage:
+                        parent_idx = lineage[0]
+                        break
+
+                candidates_to_push.append((
+                    idx,
+                    content,
+                    parent_idx,
+                    delta.iteration,
+                ))
+
+        if candidates_to_push:
+            self._server_client.push_candidates(candidates_to_push)
+
+    def _push_evaluations_to_server(self) -> None:
+        """Push new evaluations to server (batched)."""
+        if self._server_client is None or self.metric_logger is None:
+            return
+
+        evals = self.metric_logger.evaluations
+        new_evals = evals[self._last_pushed_eval_count :]
+
+        if len(new_evals) >= self._eval_push_batch_size:
+            self._server_client.push_evaluations(new_evals)
+            self._last_pushed_eval_count = len(evals)
+
+    def _push_lm_calls_to_server(self) -> None:
+        """Push new LM calls to server (batched)."""
+        if self._server_client is None or self.lm_logger is None:
+            return
+
+        calls = self.lm_logger.calls
+        new_calls = calls[self._last_pushed_lm_count :]
+
+        if len(new_calls) >= self._lm_push_batch_size:
+            self._server_client.push_lm_calls(new_calls)
+            self._last_pushed_lm_count = len(calls)
+
+    def finalize(
+        self,
+        status: str = "COMPLETED",
+        best_candidate_idx: int | None = None,
+    ) -> None:
+        """Finalize the run and push all remaining data to server.
+
+        Call this after optimization completes to ensure all data is pushed
+        to the server and the run is marked as complete.
+
+        Args:
+            status: "COMPLETED" or "FAILED"
+            best_candidate_idx: Index of the best candidate (auto-detected if None)
+        """
+        if self._server_client is None:
+            return
+
+        try:
+            # Push any remaining evaluations
+            if self.metric_logger:
+                remaining_evals = self.metric_logger.evaluations[
+                    self._last_pushed_eval_count :
+                ]
+                if remaining_evals:
+                    self._server_client.push_evaluations(remaining_evals)
+
+            # Push any remaining LM calls
+            if self.lm_logger:
+                remaining_lm = self.lm_logger.calls[self._last_pushed_lm_count :]
+                if remaining_lm:
+                    self._server_client.push_lm_calls(remaining_lm)
+
+            # Push any remaining iterations
+            self._push_iterations_to_server()
+            self._push_candidates_to_server()
+
+            # Determine best candidate if not provided
+            if best_candidate_idx is None:
+                report = self.get_optimization_report()
+                best_candidate_idx = report.get("optimized_idx", 0)
+
+            # Get best prompt and scores
+            best_prompt = None
+            if best_candidate_idx < len(self.state_logger.final_candidates):
+                best_prompt = self.state_logger.final_candidates[best_candidate_idx]
+
+            # Calculate scores
+            seed_score = None
+            best_score = None
+            if self.metric_logger:
+                seed_idx = self.state_logger.seed_candidate_idx or 0
+                seed_evals = self.metric_logger.get_evaluations_for_candidate(seed_idx)
+                best_evals = self.metric_logger.get_evaluations_for_candidate(
+                    best_candidate_idx
+                )
+                if seed_evals:
+                    seed_score = sum(e.score for e in seed_evals) / len(seed_evals)
+                if best_evals:
+                    best_score = sum(e.score for e in best_evals) / len(best_evals)
+
+            # Complete the run
+            self._server_client.complete_run(
+                status=status,
+                best_prompt=best_prompt,
+                best_candidate_idx=best_candidate_idx,
+                best_score=best_score,
+                seed_score=seed_score,
+            )
+            logger.info(f"Run finalized with status: {status}")
+        except Exception as e:
+            logger.warning(f"Failed to finalize server run: {e}")
+
+    @property
+    def server_run_id(self) -> str | None:
+        """Get the server run ID if connected."""
+        if self._server_client:
+            return self._server_client.run_id
+        return None
+
+    # ==================== Metric/Proposer Wrapping ====================
 
     def wrap_metric(
         self,
@@ -200,11 +437,13 @@ class GEPATracker:
         self._wrapped_selector = self.selector_logger
         return self.selector_logger
 
-    def get_stop_callback(self) -> GEPAStateLogger:
+    def get_stop_callback(self) -> Callable[[Any], bool]:
         """Get the stop_callback for use in gepa_kwargs.
 
-        Returns the GEPAStateLogger which implements the stop_callbacks interface.
-        Always returns False (never stops optimization).
+        Returns a callback that:
+        1. Calls the GEPAStateLogger to capture state
+        2. Pushes updates to the server (if connected)
+        3. Returns False (never stops optimization)
 
         Usage:
             gepa = GEPA(
@@ -213,9 +452,27 @@ class GEPATracker:
             )
 
         Returns:
-            GEPAStateLogger instance
+            Callable that wraps GEPAStateLogger with server push
         """
-        return self.state_logger
+
+        def stop_callback_with_server_push(state: Any) -> bool:
+            # First iteration - start the server run
+            is_first_iteration = len(self.state_logger.deltas) == 0
+            if is_first_iteration and self._server_client is not None:
+                # Extract seed prompt from state if available
+                candidates = getattr(state, "program_candidates", [])
+                seed_prompt = candidates[0] if candidates else None
+                self._start_server_run(seed_prompt)
+
+            # Call the original state logger
+            result = self.state_logger(state)
+
+            # Push to server after each iteration
+            self._push_to_server()
+
+            return result
+
+        return stop_callback_with_server_push
 
     def get_dspy_callbacks(self) -> list[DSPyLMLogger]:
         """Get DSPy callbacks for LM call capture.
