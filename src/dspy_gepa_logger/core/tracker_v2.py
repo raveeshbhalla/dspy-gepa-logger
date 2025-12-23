@@ -126,10 +126,9 @@ class GEPATracker:
         self._server_url = server_url
         self._project_name = project_name
         self._last_pushed_iteration = -1
+        self._last_pushed_delta_count = 0  # Track which deltas we've pushed candidates from
         self._last_pushed_eval_count = 0
         self._last_pushed_lm_count = 0
-        self._eval_push_batch_size = 50
-        self._lm_push_batch_size = 50
 
         if server_url:
             self._init_server_client()
@@ -243,13 +242,18 @@ class GEPATracker:
             self._last_pushed_iteration = meta.iteration
 
     def _push_candidates_to_server(self) -> None:
-        """Push new candidates to server."""
+        """Push new candidates to server (incremental - only unpushed deltas)."""
         if self._server_client is None:
             return
 
-        # Collect all new candidates from deltas
+        # Only process deltas we haven't pushed yet
+        new_deltas = self.state_logger.deltas[self._last_pushed_delta_count:]
+        if not new_deltas:
+            return
+
+        # Collect candidates from new deltas only
         candidates_to_push = []
-        for delta in self.state_logger.deltas:
+        for delta in new_deltas:
             for idx, content in delta.new_candidates:
                 # Find parent from lineage
                 parent_idx = None
@@ -268,27 +272,38 @@ class GEPATracker:
         if candidates_to_push:
             self._server_client.push_candidates(candidates_to_push)
 
+        # Update tracking to include all current deltas
+        self._last_pushed_delta_count = len(self.state_logger.deltas)
+
     def _push_evaluations_to_server(self) -> None:
-        """Push new evaluations to server (batched)."""
+        """Push new evaluations to server immediately.
+
+        Pushes all new evaluations since the last push. This ensures real-time
+        dashboard updates and prevents data loss on short runs or crashes.
+        """
         if self._server_client is None or self.metric_logger is None:
             return
 
         evals = self.metric_logger.evaluations
-        new_evals = evals[self._last_pushed_eval_count :]
+        new_evals = evals[self._last_pushed_eval_count:]
 
-        if len(new_evals) >= self._eval_push_batch_size:
+        if new_evals:
             self._server_client.push_evaluations(new_evals)
             self._last_pushed_eval_count = len(evals)
 
     def _push_lm_calls_to_server(self) -> None:
-        """Push new LM calls to server (batched)."""
+        """Push new LM calls to server immediately.
+
+        Pushes all new LM calls since the last push. This ensures real-time
+        dashboard updates and prevents data loss on short runs or crashes.
+        """
         if self._server_client is None or self.lm_logger is None:
             return
 
         calls = self.lm_logger.calls
-        new_calls = calls[self._last_pushed_lm_count :]
+        new_calls = calls[self._last_pushed_lm_count:]
 
-        if len(new_calls) >= self._lm_push_batch_size:
+        if new_calls:
             self._server_client.push_lm_calls(new_calls)
             self._last_pushed_lm_count = len(calls)
 
