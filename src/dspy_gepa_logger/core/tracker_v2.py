@@ -140,6 +140,7 @@ class GEPATracker:
         metric: Callable[..., Any],
         capture_prediction: bool = True,
         max_prediction_preview: int = 200,
+        failure_score: float = 0.0,
     ) -> LoggedMetric:
         """Wrap a metric function to capture evaluation details.
 
@@ -147,11 +148,13 @@ class GEPATracker:
         1. Set phase="eval" in context before calling the metric
         2. Capture score, feedback, and prediction for each call
         3. Restore the previous phase after the call
+        4. Handle exceptions gracefully by returning failure_score
 
         Args:
             metric: The metric function to wrap
             capture_prediction: Whether to capture predictions (default: True)
             max_prediction_preview: Max length for prediction preview
+            failure_score: Score to return when the metric throws an exception
 
         Returns:
             LoggedMetric wrapper that can be used in place of the original metric
@@ -160,6 +163,7 @@ class GEPATracker:
             metric_fn=metric,
             capture_prediction=capture_prediction,
             max_prediction_preview=max_prediction_preview,
+            failure_score=failure_score,
         )
         self._wrapped_metric = self.metric_logger
         return self.metric_logger

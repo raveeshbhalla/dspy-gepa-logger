@@ -39,6 +39,7 @@ def create_logged_gepa(
     *,
     capture_lm_calls: bool = True,
     capture_prediction: bool = True,
+    failure_score: float = 0.0,
     wrap_proposer: bool = False,
     base_proposer: Any | None = None,
     wrap_selector: bool = False,
@@ -55,6 +56,8 @@ def create_logged_gepa(
         metric: The metric function for evaluation
         capture_lm_calls: Whether to capture LM calls (default: True)
         capture_prediction: Whether to capture predictions (default: True)
+        failure_score: Score to return when metric throws exception (default: 0.0).
+            This is synchronized with GEPA's failure_score parameter.
         wrap_proposer: Whether to wrap the instruction proposer (default: False)
         base_proposer: Custom instruction proposer to wrap (if wrap_proposer=True)
         wrap_selector: Whether to wrap the selector (default: False)
@@ -87,14 +90,23 @@ def create_logged_gepa(
             "Install it with: pip install dspy"
         )
 
+    # Extract failure_score from kwargs if provided (for GEPA sync)
+    # If not in kwargs, use the explicit parameter
+    gepa_failure_score = kwargs.get("failure_score", failure_score)
+
     # Create tracker
     tracker = GEPATracker(capture_lm_calls=capture_lm_calls)
 
-    # Wrap metric
+    # Wrap metric with synchronized failure_score
     logged_metric = tracker.wrap_metric(
         metric,
         capture_prediction=capture_prediction,
+        failure_score=gepa_failure_score,
     )
+
+    # Ensure GEPA uses the same failure_score
+    if "failure_score" not in kwargs:
+        kwargs["failure_score"] = gepa_failure_score
 
     # Build gepa_kwargs with stop_callback
     final_gepa_kwargs = dict(gepa_kwargs or {})
@@ -208,6 +220,7 @@ def wrap_metric(
     metric: Callable[..., Any],
     capture_prediction: bool = True,
     max_prediction_preview: int = 200,
+    failure_score: float = 0.0,
 ) -> LoggedMetric:
     """Create a standalone LoggedMetric wrapper.
 
@@ -217,6 +230,7 @@ def wrap_metric(
         metric: The metric function to wrap
         capture_prediction: Whether to capture predictions (default: True)
         max_prediction_preview: Max length for prediction preview
+        failure_score: Score to return when metric throws exception (default: 0.0)
 
     Returns:
         LoggedMetric wrapper
@@ -230,6 +244,7 @@ def wrap_metric(
         metric_fn=metric,
         capture_prediction=capture_prediction,
         max_prediction_preview=max_prediction_preview,
+        failure_score=failure_score,
     )
 
 

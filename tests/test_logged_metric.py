@@ -483,3 +483,139 @@ class TestLoggedMetricEdgeCases:
         logged(example, pred, custom_kwarg="value")
 
         assert received_kwargs.get("custom_kwarg") == "value"
+
+
+class TestLoggedMetricExceptionHandling:
+    """Test exception handling in LoggedMetric."""
+
+    def setup_method(self):
+        clear_ctx()
+
+    def test_metric_exception_returns_failure_score(self):
+        """When metric throws, should return failure_score."""
+
+        def failing_metric(example, prediction, trace=None):
+            raise ValueError("Metric failed!")
+
+        logged = LoggedMetric(failing_metric, failure_score=0.0)
+        example = MockExample(question="q", answer="4")
+        pred = MockPrediction(answer="4")
+
+        result = logged(example, pred)
+
+        assert result == 0.0
+
+    def test_metric_exception_records_evaluation(self):
+        """When metric throws, should still record an evaluation."""
+
+        def failing_metric(example, prediction, trace=None):
+            raise ValueError("Metric failed!")
+
+        logged = LoggedMetric(failing_metric, failure_score=0.0)
+        example = MockExample(question="q", answer="4")
+        pred = MockPrediction(answer="4")
+
+        logged(example, pred)
+
+        assert len(logged.evaluations) == 1
+        record = logged.evaluations[0]
+        assert record.score == 0.0
+        assert "Metric error" in record.feedback
+        assert "Metric failed!" in record.feedback
+
+    def test_custom_failure_score(self):
+        """Should use custom failure_score when configured."""
+
+        def failing_metric(example, prediction, trace=None):
+            raise RuntimeError("Something went wrong")
+
+        logged = LoggedMetric(failing_metric, failure_score=-1.0)
+        example = MockExample(question="q", answer="4")
+        pred = MockPrediction(answer="4")
+
+        result = logged(example, pred)
+
+        assert result == -1.0
+        assert logged.evaluations[0].score == -1.0
+
+    def test_attribute_error_on_prediction(self):
+        """Should handle AttributeError when accessing prediction attributes."""
+
+        def metric_accessing_missing_attr(example, prediction, trace=None):
+            # This simulates accessing an attribute that doesn't exist
+            return prediction.nonexistent_field
+
+        logged = LoggedMetric(metric_accessing_missing_attr, failure_score=0.0)
+        example = MockExample(question="q", answer="4")
+        pred = MockPrediction(answer="4")  # Doesn't have nonexistent_field
+
+        result = logged(example, pred)
+
+        assert result == 0.0
+        record = logged.evaluations[0]
+        assert record.score == 0.0
+        assert "Metric error" in record.feedback
+
+    def test_exception_doesnt_break_context_restoration(self):
+        """Context should be restored even when metric throws."""
+        set_ctx(phase="reflection")
+
+        def failing_metric(example, prediction, trace=None):
+            raise ValueError("Boom!")
+
+        logged = LoggedMetric(failing_metric, failure_score=0.0)
+        example = MockExample(question="q", answer="4")
+        pred = MockPrediction(answer="4")
+
+        logged(example, pred)
+
+        # Phase should be restored to previous value
+        assert get_ctx().get("phase") == "reflection"
+
+    def test_serialization_error_handled(self):
+        """Should handle errors during prediction serialization."""
+
+        class BadPrediction:
+            """Prediction that fails to serialize."""
+
+            def toDict(self):
+                raise ValueError("Cannot serialize")
+
+            def __str__(self):
+                return "BadPrediction()"
+
+        logged = LoggedMetric(simple_metric, failure_score=0.0)
+        example = MockExample(question="q", answer="4")
+        pred = BadPrediction()
+
+        # Should not raise - serialization errors are caught
+        logged(example, pred)
+
+        record = logged.evaluations[0]
+        # Fallback preview should be used
+        assert "BadPrediction" in record.prediction_preview
+
+    def test_example_serialization_error_handled(self):
+        """Should handle errors during example input serialization."""
+
+        class BadExample:
+            """Example that fails to serialize."""
+
+            question = "test"
+            answer = "test"
+
+            def inputs(self):
+                raise ValueError("Cannot serialize inputs")
+
+            def toDict(self):
+                raise ValueError("Cannot serialize")
+
+        logged = LoggedMetric(simple_metric, failure_score=0.0)
+        example = BadExample()
+        pred = MockPrediction(answer="4")
+
+        # Should not raise
+        logged(example, pred)
+
+        record = logged.evaluations[0]
+        assert "_error" in record.example_inputs

@@ -176,6 +176,7 @@ class LoggedMetric:
         *,
         capture_prediction: bool = True,
         max_prediction_preview: int = 200,
+        failure_score: float = 0.0,
     ):
         """Initialize the logged metric wrapper.
 
@@ -183,10 +184,12 @@ class LoggedMetric:
             metric_fn: The metric function to wrap
             capture_prediction: Whether to capture predictions
             max_prediction_preview: Max length for prediction preview
+            failure_score: Score to return when the metric throws an exception
         """
         self.metric_fn = metric_fn
         self.capture_prediction = capture_prediction
         self.max_prediction_preview = max_prediction_preview
+        self.failure_score = failure_score
         self.evaluations: list[EvaluationRecord] = []
 
     def __call__(
@@ -202,6 +205,10 @@ class LoggedMetric:
 
         Supports both DSPy standard metrics (3 args) and GEPA metrics (5 args).
 
+        If the metric throws an exception (e.g., when accessing attributes that
+        don't exist on a FailedPrediction), this wrapper catches it, logs the
+        failure, and returns the configured failure_score.
+
         Args:
             example: The example being evaluated
             prediction: The model's prediction
@@ -211,8 +218,13 @@ class LoggedMetric:
             **kwargs: Additional arguments for the metric
 
         Returns:
-            The original metric result (unchanged)
+            The original metric result (unchanged), or failure_score on exception
         """
+        import logging
+        import traceback
+
+        logger = logging.getLogger(__name__)
+
         # Get current context (iteration, candidate_idx set by state logger or proposer)
         ctx = get_ctx()
 
@@ -221,47 +233,78 @@ class LoggedMetric:
         set_ctx(phase="eval")
 
         # Generate deterministic example ID
-        example_id = _deterministic_example_id(example)
+        try:
+            example_id = _deterministic_example_id(example)
+        except Exception:
+            # Fallback to object id if serialization fails
+            example_id = f"example_{id(example)}"
 
-        # Call actual metric with all args it might need
-        # Try to pass GEPA args if the metric accepts them
-        import inspect
-        sig = inspect.signature(self.metric_fn)
-        params = list(sig.parameters.keys())
+        result = None
+        score = self.failure_score
+        feedback = None
+        metric_error = None
 
-        if "pred_name" in params or "pred_trace" in params:
-            # GEPA-style metric with 5 args
-            result = self.metric_fn(
-                example, prediction, trace, pred_name, pred_trace, **kwargs
+        try:
+            # Call actual metric with all args it might need
+            # Try to pass GEPA args if the metric accepts them
+            import inspect
+            sig = inspect.signature(self.metric_fn)
+            params = list(sig.parameters.keys())
+
+            if "pred_name" in params or "pred_trace" in params:
+                # GEPA-style metric with 5 args
+                result = self.metric_fn(
+                    example, prediction, trace, pred_name, pred_trace, **kwargs
+                )
+            else:
+                # Standard DSPy metric with 3 args
+                result = self.metric_fn(example, prediction, trace=trace, **kwargs)
+
+            # Extract score and feedback from various return types
+            if isinstance(result, tuple) and len(result) == 2:
+                # Tuple format: (score, feedback)
+                score, feedback = result
+            elif hasattr(result, "score"):
+                # dspy.Prediction or object with .score attribute
+                score = getattr(result, "score", 0.0)
+                feedback = getattr(result, "feedback", None)
+            else:
+                # Plain score (float/int)
+                score, feedback = result, None
+
+        except Exception as e:
+            # Log the exception with traceback for debugging
+            metric_error = str(e)
+            tb_str = traceback.format_exc()
+            logger.warning(
+                f"Metric evaluation failed for example {example_id}: {e}\n"
+                f"Using failure_score={self.failure_score}"
             )
-        else:
-            # Standard DSPy metric with 3 args
-            result = self.metric_fn(example, prediction, trace=trace, **kwargs)
+            logger.debug(f"Full traceback:\n{tb_str}")
 
-        # Extract score and feedback from various return types
-        if isinstance(result, tuple) and len(result) == 2:
-            # Tuple format: (score, feedback)
-            score, feedback = result
-        elif hasattr(result, "score"):
-            # dspy.Prediction or object with .score attribute
-            score = getattr(result, "score", 0.0)
-            feedback = getattr(result, "feedback", None)
-        else:
-            # Plain score (float/int)
-            score, feedback = result, None
+            # Set failure values
+            score = self.failure_score
+            feedback = f"Metric error: {metric_error}"
+            result = self.failure_score  # Return simple score for GEPA compatibility
 
         # Serialize prediction (ref + preview, not raw object)
         if self.capture_prediction:
-            pred_ref, pred_preview = _serialize_prediction(
-                prediction, self.max_prediction_preview
-            )
+            try:
+                pred_ref, pred_preview = _serialize_prediction(
+                    prediction, self.max_prediction_preview
+                )
+            except Exception:
+                pred_ref, pred_preview = None, str(prediction)[:200]
         else:
             pred_ref, pred_preview = None, ""
 
         # Serialize example inputs for display
-        example_inputs = _serialize_example(example)
+        try:
+            example_inputs = _serialize_example(example)
+        except Exception:
+            example_inputs = {"_error": "Failed to serialize example inputs"}
 
-        # Record evaluation
+        # Record evaluation (including failures)
         record = EvaluationRecord(
             eval_id=str(uuid.uuid4()),
             example_id=example_id,
