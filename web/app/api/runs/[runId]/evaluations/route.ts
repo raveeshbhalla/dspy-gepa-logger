@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { emitRunUpdate } from "@/lib/sse-emitter";
+import { randomUUID } from "crypto";
 
 type RouteContext = {
   params: Promise<{ runId: string }>;
@@ -20,36 +21,47 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Create evaluations in batch, skipping duplicates on retry
-    const created = await prisma.evaluation.createMany({
-      data: evaluations.map((ev: {
-        evalId: string;
-        exampleId: string;
-        candidateIdx?: number;
-        iteration?: number;
-        phase: string;
-        score: number;
-        feedback?: string;
-        exampleInputs?: Record<string, unknown>;
-        predictionPreview?: string;
-        predictionRef?: string;
-        timestamp: number;
-      }) => ({
+    // Use INSERT OR IGNORE for SQLite idempotency (skipDuplicates not supported)
+    // This safely handles retries without duplicating data
+    let insertedCount = 0;
+    for (const ev of evaluations as Array<{
+      evalId: string;
+      exampleId: string;
+      candidateIdx?: number;
+      iteration?: number;
+      phase: string;
+      score: number;
+      feedback?: string;
+      exampleInputs?: Record<string, unknown>;
+      predictionPreview?: string;
+      predictionRef?: string;
+      timestamp: number;
+    }>) {
+      const id = randomUUID().replace(/-/g, "").slice(0, 25);
+      const exampleInputs = ev.exampleInputs ? JSON.stringify(ev.exampleInputs) : null;
+      const result = await prisma.$executeRawUnsafe(`
+        INSERT OR IGNORE INTO Evaluation (
+          id, runId, evalId, exampleId, candidateIdx, iteration, phase,
+          score, feedback, exampleInputs, predictionPreview, predictionRef,
+          timestamp, createdAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `,
+        id,
         runId,
-        evalId: ev.evalId,
-        exampleId: ev.exampleId,
-        candidateIdx: ev.candidateIdx ?? null,
-        iteration: ev.iteration ?? null,
-        phase: ev.phase,
-        score: ev.score,
-        feedback: ev.feedback ?? null,
-        exampleInputs: ev.exampleInputs ? JSON.stringify(ev.exampleInputs) : null,
-        predictionPreview: ev.predictionPreview ?? null,
-        predictionRef: ev.predictionRef ?? null,
-        timestamp: ev.timestamp,
-      })),
-      skipDuplicates: true,  // Idempotent - safe to retry on network failures
-    });
+        ev.evalId,
+        ev.exampleId,
+        ev.candidateIdx ?? null,
+        ev.iteration ?? null,
+        ev.phase,
+        ev.score,
+        ev.feedback ?? null,
+        exampleInputs,
+        ev.predictionPreview ?? null,
+        ev.predictionRef ?? null,
+        ev.timestamp
+      );
+      insertedCount += result;
+    }
 
     // Update run stats
     const totalEvals = await prisma.evaluation.count({
@@ -65,12 +77,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
     emitRunUpdate(runId, {
       type: "evaluation",
       data: {
-        count: created.count,
+        count: insertedCount,
         totalEvaluations: totalEvals,
       },
     });
 
-    return NextResponse.json({ created: created.count }, { status: 201 });
+    return NextResponse.json({ created: insertedCount }, { status: 201 });
   } catch (error) {
     console.error("Error pushing evaluations:", error);
     return NextResponse.json(
