@@ -221,7 +221,7 @@ export function LogsTab({ runId, isRunning }: LogsTabProps) {
                   </Badge>
                   {log.iteration != null && (
                     <span className="text-muted-foreground shrink-0 text-xs">
-                      [iter {log.iteration}]
+                      [iter {log.iteration + 1}]
                     </span>
                   )}
                   <div className="flex-1 min-w-0">

@@ -65,6 +65,8 @@ export function IterationsTab({
 }: IterationsTabProps) {
   const [expandedIteration, setExpandedIteration] = useState<number | null>(null);
 
+  // LM calls during iteration N are captured with iteration context N
+  // (the stop_callback sets context after each iteration completes)
   function getIterationLmCalls(iterNum: number): LmCall[] {
     return lmCalls.filter((lm) => lm.iteration === iterNum);
   }
@@ -232,7 +234,7 @@ export function IterationsTab({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <CardTitle className="text-lg">
-                    Iteration {iter.iterationNumber}
+                    Iteration {iter.iterationNumber + 1}
                   </CardTitle>
                   <Badge variant="secondary">{iter.totalEvals} evals</Badge>
                   <Badge variant="outline">

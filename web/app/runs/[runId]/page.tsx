@@ -250,8 +250,9 @@ export default function RunPage() {
             candidates={run.totalCandidates}
             lmCalls={run.totalLmCalls}
             evaluations={run.totalEvaluations}
-            seedScore={run.seedScore}
-            bestScore={run.bestScore}
+            avgSeedScore={avgSeedScore ?? run.seedScore}
+            avgBestScore={avgBestScore ?? run.bestScore}
+            avgImprovement={avgImprovement}
           />
 
           {/* Prompt Comparison */}

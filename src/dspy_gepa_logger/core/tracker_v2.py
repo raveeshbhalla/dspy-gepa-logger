@@ -42,7 +42,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generator, TextIO
 
-from .context import clear_ctx, get_ctx
+from .context import clear_ctx, get_ctx, set_ctx
 from .state_logger import GEPAStateLogger, IterationDelta, IterationMetadata
 from .lm_logger import DSPyLMLogger, LMCall
 from .logged_metric import LoggedMetric, EvaluationRecord
@@ -55,6 +55,49 @@ from .logged_proposer import (
 
 
 logger = logging.getLogger(__name__)
+
+
+class LoggedLM:
+    """Wrapper that sets phase context before LM calls.
+
+    This enables proper phase attribution for reflection/proposal LM calls
+    without requiring users to manually wrap the proposer.
+
+    Usage:
+        # Wrap reflection_lm to tag all its calls as 'reflection' phase
+        logged_lm = LoggedLM(reflection_lm, phase="reflection")
+        gepa = GEPA(reflection_lm=logged_lm, ...)
+
+    How it works:
+        1. Before each call: sets phase in context
+        2. LM call executes (DSPyLMLogger will capture with phase tag)
+        3. After call: clears phase from context
+    """
+
+    def __init__(self, base_lm: Any, phase: str):
+        """Initialize the logged LM wrapper.
+
+        Args:
+            base_lm: The LM instance to wrap
+            phase: The phase to tag calls with (e.g., "reflection", "proposal")
+        """
+        self._base_lm = base_lm
+        self._phase = phase
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Execute the LM call with phase context set."""
+        set_ctx(phase=self._phase)
+        try:
+            return self._base_lm(*args, **kwargs)
+        finally:
+            set_ctx(phase=None)
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to base LM.
+
+        This allows the wrapper to be a drop-in replacement for the base LM.
+        """
+        return getattr(self._base_lm, name)
 
 
 class LogPushWorker:

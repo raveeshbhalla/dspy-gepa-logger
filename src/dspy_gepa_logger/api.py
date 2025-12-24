@@ -29,7 +29,7 @@ Example usage:
 
 from typing import Any, Callable
 
-from .core.tracker_v2 import GEPATracker
+from .core.tracker_v2 import GEPATracker, LoggedLM
 from .core.logged_metric import LoggedMetric
 from .core.logged_proposer import LoggedInstructionProposer, LoggedSelector
 
@@ -154,6 +154,14 @@ def create_logged_gepa(
     # Note: We only wrap if a base_selector is provided
     if wrap_selector and base_selector is not None:
         kwargs["selector"] = tracker.wrap_selector(base_selector)
+
+    # Wrap reflection_lm to tag its calls with phase="reflection"
+    # This enables proper phase attribution without requiring proposer wrapping
+    if "reflection_lm" in kwargs and kwargs["reflection_lm"] is not None:
+        kwargs["reflection_lm"] = LoggedLM(
+            kwargs["reflection_lm"],
+            phase="reflection",
+        )
 
     # Create GEPA with merged kwargs
     gepa = GEPA(

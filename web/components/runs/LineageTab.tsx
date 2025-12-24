@@ -18,6 +18,7 @@ type Evaluation = {
   candidateIdx: number | null;
   score: number;
   feedback: string | null;
+  timestamp?: number;
 };
 
 type TreeNode = {
@@ -53,15 +54,48 @@ export function LineageTab({
     const candidateScores = new Map<number, number[]>();
     const valsetIds = new Set(valsetExampleIds || []);
 
-    evaluations.forEach((ev) => {
-      if (ev.candidateIdx == null) return;
-      if (valsetExampleIds && !valsetIds.has(ev.exampleId)) return;
+    // Check if candidateIdx is available
+    const hasCandidateIdx = evaluations.some((e) => e.candidateIdx !== null);
 
-      if (!candidateScores.has(ev.candidateIdx)) {
-        candidateScores.set(ev.candidateIdx, []);
+    if (hasCandidateIdx) {
+      // Use candidateIdx-based grouping
+      evaluations.forEach((ev) => {
+        if (ev.candidateIdx == null) return;
+        if (valsetExampleIds && !valsetIds.has(ev.exampleId)) return;
+
+        if (!candidateScores.has(ev.candidateIdx)) {
+          candidateScores.set(ev.candidateIdx, []);
+        }
+        candidateScores.get(ev.candidateIdx)!.push(ev.score);
+      });
+    } else {
+      // Fallback: estimate scores by iteration
+      // Group evaluations by exampleId, find max score per example for each candidate
+      // Seed (candidate 0) = first evaluation per example (by timestamp)
+      // Other candidates = can't reliably determine, so skip scoring
+      // At minimum, calculate seed score from first evaluations
+      const byExample = new Map<string, typeof evaluations>();
+      evaluations.forEach((ev) => {
+        if (valsetExampleIds && !valsetIds.has(ev.exampleId)) return;
+        const existing = byExample.get(ev.exampleId) || [];
+        existing.push(ev);
+        byExample.set(ev.exampleId, existing);
+      });
+
+      const seedScores: number[] = [];
+      byExample.forEach((evals) => {
+        // Sort by timestamp, first = seed evaluation
+        const sorted = [...evals].sort((a, b) =>
+          ((a as { timestamp?: number }).timestamp ?? 0) - ((b as { timestamp?: number }).timestamp ?? 0)
+        );
+        if (sorted.length > 0) {
+          seedScores.push(sorted[0].score);
+        }
+      });
+      if (seedScores.length > 0) {
+        candidateScores.set(0, seedScores);
       }
-      candidateScores.get(ev.candidateIdx)!.push(ev.score);
-    });
+    }
 
     const avgScores = new Map<number, number>();
     candidateScores.forEach((scores, idx) => {
@@ -220,25 +254,68 @@ export function LineageTab({
 
     // Get scores for both candidates
     const valsetIds = new Set(valsetExampleIds || []);
-    const cand1Evals = evaluations.filter(
-      (ev) =>
-        ev.candidateIdx === idx1 &&
-        (valsetExampleIds ? valsetIds.has(ev.exampleId) : true)
-    );
-    const cand2Evals = evaluations.filter(
-      (ev) =>
-        ev.candidateIdx === idx2 &&
-        (valsetExampleIds ? valsetIds.has(ev.exampleId) : true)
-    );
+    const hasCandidateIdx = evaluations.some((e) => e.candidateIdx !== null);
 
-    const avgScore1 =
-      cand1Evals.length > 0
-        ? cand1Evals.reduce((a, b) => a + b.score, 0) / cand1Evals.length
-        : null;
-    const avgScore2 =
-      cand2Evals.length > 0
-        ? cand2Evals.reduce((a, b) => a + b.score, 0) / cand2Evals.length
-        : null;
+    let avgScore1: number | null = null;
+    let avgScore2: number | null = null;
+
+    if (hasCandidateIdx) {
+      // Use candidateIdx-based filtering
+      const cand1Evals = evaluations.filter(
+        (ev) =>
+          ev.candidateIdx === idx1 &&
+          (valsetExampleIds ? valsetIds.has(ev.exampleId) : true)
+      );
+      const cand2Evals = evaluations.filter(
+        (ev) =>
+          ev.candidateIdx === idx2 &&
+          (valsetExampleIds ? valsetIds.has(ev.exampleId) : true)
+      );
+
+      avgScore1 =
+        cand1Evals.length > 0
+          ? cand1Evals.reduce((a, b) => a + b.score, 0) / cand1Evals.length
+          : null;
+      avgScore2 =
+        cand2Evals.length > 0
+          ? cand2Evals.reduce((a, b) => a + b.score, 0) / cand2Evals.length
+          : null;
+    } else {
+      // Fallback: timestamp-based scoring
+      // Group by exampleId and use timestamp ordering
+      const byExample = new Map<string, Evaluation[]>();
+      evaluations.forEach((ev) => {
+        if (valsetExampleIds && !valsetIds.has(ev.exampleId)) return;
+        const existing = byExample.get(ev.exampleId) || [];
+        existing.push(ev);
+        byExample.set(ev.exampleId, existing);
+      });
+
+      // For candidate 0 (seed), use first evaluation per example
+      // For other candidates, use best score per example
+      if (idx1 === 0) {
+        const scores: number[] = [];
+        byExample.forEach((evals) => {
+          const sorted = [...evals].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+          if (sorted.length > 0) scores.push(sorted[0].score);
+        });
+        if (scores.length > 0) {
+          avgScore1 = scores.reduce((a, b) => a + b, 0) / scores.length;
+        }
+      }
+
+      // For the other candidate, we can only use best score as fallback
+      const bestScores: number[] = [];
+      byExample.forEach((evals) => {
+        if (evals.length > 0) {
+          const best = evals.reduce((max, e) => e.score > max.score ? e : max, evals[0]);
+          bestScores.push(best.score);
+        }
+      });
+      if (bestScores.length > 0) {
+        avgScore2 = bestScores.reduce((a, b) => a + b, 0) / bestScores.length;
+      }
+    }
 
     return (
       <Card className="mt-8">
