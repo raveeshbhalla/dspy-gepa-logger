@@ -145,20 +145,14 @@ def create_logged_gepa(
     ]
 
     # Handle proposer wrapping
-    if wrap_proposer:
-        if base_proposer is None:
-            from dspy.teleprompt.gepa import DefaultInstructionProposer
-
-            base_proposer = DefaultInstructionProposer()
+    # Note: We only wrap if a base_proposer is provided, since GEPA's internal
+    # default proposer is not easily accessible in newer versions
+    if wrap_proposer and base_proposer is not None:
         kwargs["instruction_proposer"] = tracker.wrap_proposer(base_proposer)
 
     # Handle selector wrapping
-    if wrap_selector:
-        if base_selector is None:
-            # Use default selector if none provided
-            from dspy.teleprompt.gepa import DefaultSelector
-
-            base_selector = DefaultSelector()
+    # Note: We only wrap if a base_selector is provided
+    if wrap_selector and base_selector is not None:
         kwargs["selector"] = tracker.wrap_selector(base_selector)
 
     # Create GEPA with merged kwargs
