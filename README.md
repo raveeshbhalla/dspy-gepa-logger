@@ -174,7 +174,7 @@ The HTML report includes:
   - **Click any row** to open a modal with full evaluation details
   - Filterable by validation set
 
-![HTML Report Screenshot](docs/report-screenshot.png)
+![Web Dashboard Screenshot](docs/report-screenshot.png)
 
 ## Example
 
@@ -218,6 +218,10 @@ For a more MLFlow-like experience with persistent history, project organization,
 ```bash
 cd web
 npm install
+
+# Create .env file with database URL
+echo 'DATABASE_URL="file:./dev.db"' > .env
+
 npx prisma migrate deploy
 npm run dev
 ```
