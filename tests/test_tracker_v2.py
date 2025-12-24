@@ -16,7 +16,7 @@ from typing import Any
 from unittest.mock import Mock, MagicMock
 
 from dspy_gepa_logger.core.context import clear_ctx, get_ctx, set_ctx
-from dspy_gepa_logger.core.tracker_v2 import GEPATracker, CandidateDiff
+from dspy_gepa_logger.core.tracker_v2 import GEPATracker, CandidateDiff, LoggedLM
 from dspy_gepa_logger.core.state_logger import GEPAStateLogger
 from dspy_gepa_logger.core.lm_logger import DSPyLMLogger
 from dspy_gepa_logger.core.logged_metric import LoggedMetric
@@ -739,3 +739,131 @@ class TestContextFlow:
 
         # Should have seen "proposal" phase during propose
         assert "proposal" in phases_seen
+
+
+class TestLoggedLMContextRestoration:
+    """Test LoggedLM properly saves and restores phase context."""
+
+    def setup_method(self):
+        clear_ctx()
+
+    def test_restores_previous_phase(self):
+        """LoggedLM should restore previous phase after call."""
+        call_count = 0
+
+        class MockLM:
+            def __call__(self, *args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                return "response"
+
+        # Set initial phase
+        set_ctx(phase="eval")
+        assert get_ctx().get("phase") == "eval"
+
+        # Create LoggedLM with different phase
+        logged_lm = LoggedLM(MockLM(), phase="reflection")
+
+        # Call should temporarily set phase to "reflection"
+        logged_lm("test input")
+
+        # After call, phase should be restored to "eval"
+        assert get_ctx().get("phase") == "eval"
+        assert call_count == 1
+
+    def test_restores_none_phase(self):
+        """LoggedLM should restore None phase after call."""
+        class MockLM:
+            def __call__(self, *args, **kwargs):
+                return "response"
+
+        # No initial phase set
+        assert get_ctx().get("phase") is None
+
+        logged_lm = LoggedLM(MockLM(), phase="proposal")
+        logged_lm("test input")
+
+        # Phase should be cleared (restored to None)
+        assert get_ctx().get("phase") is None
+
+    def test_phase_is_set_during_call(self):
+        """LoggedLM should set phase during the call."""
+        captured_phase = None
+
+        class MockLM:
+            def __call__(self, *args, **kwargs):
+                nonlocal captured_phase
+                captured_phase = get_ctx().get("phase")
+                return "response"
+
+        set_ctx(phase="eval")
+        logged_lm = LoggedLM(MockLM(), phase="reflection")
+        logged_lm("test input")
+
+        # During call, phase should have been "reflection"
+        assert captured_phase == "reflection"
+        # After call, restored to "eval"
+        assert get_ctx().get("phase") == "eval"
+
+    def test_restores_on_exception(self):
+        """LoggedLM should restore phase even on exception."""
+        class MockLM:
+            def __call__(self, *args, **kwargs):
+                raise ValueError("test error")
+
+        set_ctx(phase="eval")
+        logged_lm = LoggedLM(MockLM(), phase="reflection")
+
+        with pytest.raises(ValueError):
+            logged_lm("test input")
+
+        # Phase should still be restored
+        assert get_ctx().get("phase") == "eval"
+
+    def test_nested_logged_lm_calls(self):
+        """Nested LoggedLM calls should properly restore phases."""
+        phases_during_calls = []
+
+        class OuterMockLM:
+            def __init__(self, inner_lm):
+                self.inner_lm = inner_lm
+
+            def __call__(self, *args, **kwargs):
+                phases_during_calls.append(("outer_before", get_ctx().get("phase")))
+                self.inner_lm("inner call")
+                phases_during_calls.append(("outer_after", get_ctx().get("phase")))
+                return "outer response"
+
+        class InnerMockLM:
+            def __call__(self, *args, **kwargs):
+                phases_during_calls.append(("inner", get_ctx().get("phase")))
+                return "inner response"
+
+        inner_logged = LoggedLM(InnerMockLM(), phase="inner_phase")
+        outer_logged = LoggedLM(OuterMockLM(inner_logged), phase="outer_phase")
+
+        set_ctx(phase="initial")
+        outer_logged("test")
+
+        # Verify phase transitions
+        assert phases_during_calls == [
+            ("outer_before", "outer_phase"),
+            ("inner", "inner_phase"),
+            ("outer_after", "outer_phase"),  # Restored after inner call
+        ]
+        # Final state should be restored to initial
+        assert get_ctx().get("phase") == "initial"
+
+    def test_delegates_attributes_to_base_lm(self):
+        """LoggedLM should delegate attribute access to base LM."""
+        class MockLM:
+            model_name = "test-model"
+            temperature = 0.7
+
+            def __call__(self, *args, **kwargs):
+                return "response"
+
+        logged_lm = LoggedLM(MockLM(), phase="test")
+
+        assert logged_lm.model_name == "test-model"
+        assert logged_lm.temperature == 0.7

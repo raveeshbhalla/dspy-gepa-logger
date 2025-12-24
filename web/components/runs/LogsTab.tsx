@@ -38,6 +38,9 @@ export function LogsTab({ runId, isRunning }: LogsTabProps) {
 
   // Fetch initial logs
   useEffect(() => {
+    // Clear logs immediately when runId changes to prevent mixing old/new logs
+    setLogs([]);
+
     async function fetchLogs() {
       try {
         const res = await fetch(`/api/runs/${runId}/logs`);

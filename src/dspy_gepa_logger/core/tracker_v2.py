@@ -86,11 +86,12 @@ class LoggedLM:
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Execute the LM call with phase context set."""
+        prev_phase = get_ctx().get("phase")
         set_ctx(phase=self._phase)
         try:
             return self._base_lm(*args, **kwargs)
         finally:
-            set_ctx(phase=None)
+            set_ctx(phase=prev_phase)
 
     def __getattr__(self, name: str) -> Any:
         """Delegate unknown attributes to base LM.
