@@ -129,6 +129,7 @@ class GEPATracker:
         self._last_pushed_delta_count = 0  # Track which deltas we've pushed candidates from
         self._last_pushed_eval_count = 0
         self._last_pushed_lm_count = 0
+        self._pending_seed_prompt: dict[str, str] | None = None  # For start_run retries
 
         if server_url:
             self._init_server_client()
@@ -200,11 +201,23 @@ class GEPATracker:
         Always attempts to push if a server client exists, even if previously
         disconnected. This allows recovery after transient network issues since
         the client will restore is_connected on successful requests.
+
+        If start_run failed previously (run_id is None), we retry it here.
+        This ensures data is eventually pushed once the server becomes available.
         """
         if self._server_client is None:
             return
 
         try:
+            # Retry start_run if it previously failed
+            # This handles cases where the server was down during the first callback
+            if self._server_client.run_id is None and self._pending_seed_prompt is not None:
+                logger.info("Retrying start_run (server was unavailable previously)")
+                self._start_server_run(self._pending_seed_prompt)
+                # If still no run_id, skip pushing this time (will retry next iteration)
+                if self._server_client.run_id is None:
+                    return
+
             self._push_iterations_to_server()
             self._push_candidates_to_server()
             self._push_evaluations_to_server()
@@ -213,11 +226,20 @@ class GEPATracker:
             logger.warning(f"Failed to push data to server: {e}")
 
     def _push_iterations_to_server(self) -> None:
-        """Push new iterations to server."""
+        """Push new iterations to server.
+
+        Note: We iterate all metadata and filter by iteration number rather than
+        slicing by index, because iteration numbers may not be zero-based or
+        contiguous. This ensures we don't skip or drop iterations.
+        """
         if self._server_client is None:
             return
 
-        for meta in self.state_logger.metadata[self._last_pushed_iteration + 1 :]:
+        # Filter metadata by iteration number, not list index
+        # This handles non-zero-based or non-contiguous iteration numbers
+        for meta in self.state_logger.metadata:
+            if meta.iteration <= self._last_pushed_iteration:
+                continue  # Already pushed this iteration
             # Find the corresponding delta for pareto data
             delta = None
             for d in self.state_logger.deltas:
@@ -339,6 +361,14 @@ class GEPATracker:
             return
 
         try:
+            # Retry start_run if it previously failed (server was down during optimization)
+            # This ensures we can still push all data if the server comes back before finalize
+            if self._server_client.run_id is None and self._pending_seed_prompt is not None:
+                logger.info("Retrying start_run in finalize (server was unavailable previously)")
+                self._start_server_run(self._pending_seed_prompt)
+                if self._server_client.run_id is None:
+                    logger.warning("Could not start server run - data will not be pushed")
+                    return
             # Push any remaining evaluations
             if self.metric_logger:
                 remaining_evals = self.metric_logger.evaluations[
@@ -491,6 +521,8 @@ class GEPATracker:
                 # Extract seed prompt from state if available
                 candidates = getattr(state, "program_candidates", [])
                 seed_prompt = candidates[0] if candidates else None
+                # Store seed prompt for potential retries if start_run fails
+                self._pending_seed_prompt = seed_prompt
                 self._start_server_run(seed_prompt)
 
             # Call the original state logger

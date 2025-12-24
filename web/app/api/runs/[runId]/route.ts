@@ -51,11 +51,22 @@ export async function GET(request: NextRequest, context: RouteContext) {
         ...cand,
         content: JSON.parse(cand.content),
       })),
-      evaluations: run.evaluations.map((ev: typeof run.evaluations[number]) => ({
-        ...ev,
-        exampleInputs: ev.exampleInputs ? JSON.parse(ev.exampleInputs) : null,
-        predictionRef: ev.predictionRef ? JSON.parse(ev.predictionRef) : null,
-      })),
+      evaluations: run.evaluations.map((ev: typeof run.evaluations[number]) => {
+        let parsedPredictionRef = null;
+        if (ev.predictionRef) {
+          try {
+            parsedPredictionRef = JSON.parse(ev.predictionRef);
+          } catch {
+            // If predictionRef is not valid JSON, return as raw string
+            parsedPredictionRef = ev.predictionRef;
+          }
+        }
+        return {
+          ...ev,
+          exampleInputs: ev.exampleInputs ? JSON.parse(ev.exampleInputs) : null,
+          predictionRef: parsedPredictionRef,
+        };
+      }),
       lmCalls: run.lmCalls.map((lm: typeof run.lmCalls[number]) => ({
         ...lm,
         inputs: lm.inputs ? JSON.parse(lm.inputs) : null,

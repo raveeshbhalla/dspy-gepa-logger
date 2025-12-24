@@ -26,13 +26,22 @@ A web dashboard for tracking DSPy GEPA optimization runs with real-time updates,
 npm install
 ```
 
-### 2. Initialize the database
+### 2. Configure environment
+
+Copy the example environment file (or create `.env` if it doesn't exist):
+
+```bash
+# The .env file should contain:
+DATABASE_URL="file:./dev.db"
+```
+
+### 3. Initialize the database
 
 ```bash
 npx prisma migrate deploy
 ```
 
-### 3. Start the development server
+### 4. Start the development server
 
 ```bash
 npm run dev

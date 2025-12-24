@@ -34,11 +34,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
       feedback?: string;
       exampleInputs?: Record<string, unknown>;
       predictionPreview?: string;
-      predictionRef?: string;
+      predictionRef?: unknown;
       timestamp: number;
     }>) {
       const id = randomUUID().replace(/-/g, "").slice(0, 25);
       const exampleInputs = ev.exampleInputs ? JSON.stringify(ev.exampleInputs) : null;
+      // Normalize predictionRef to JSON string - handles objects sent from Python client
+      const predictionRef = ev.predictionRef != null
+        ? (typeof ev.predictionRef === "string"
+            ? ev.predictionRef
+            : JSON.stringify(ev.predictionRef))
+        : null;
       const result = await prisma.$executeRawUnsafe(`
         INSERT OR IGNORE INTO Evaluation (
           id, runId, evalId, exampleId, candidateIdx, iteration, phase,
@@ -57,7 +63,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         ev.feedback ?? null,
         exampleInputs,
         ev.predictionPreview ?? null,
-        ev.predictionRef ?? null,
+        predictionRef,
         ev.timestamp
       );
       insertedCount += result;

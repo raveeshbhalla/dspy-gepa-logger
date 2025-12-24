@@ -49,11 +49,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
       },
     });
 
-    // Update run stats
+    // Update run stats - use Math.max to handle out-of-order updates and non-zero-based iteration numbers
+    const currentRun = await prisma.run.findUnique({
+      where: { id: runId },
+      select: { totalIterations: true },
+    });
+    const newTotal = Math.max(
+      currentRun?.totalIterations ?? 0,
+      iterationNumber + 1
+    );
     await prisma.run.update({
       where: { id: runId },
       data: {
-        totalIterations: iterationNumber + 1,
+        totalIterations: newTotal,
       },
     });
 
