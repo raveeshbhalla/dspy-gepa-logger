@@ -195,8 +195,13 @@ class GEPATracker:
             logger.warning(f"Failed to start server run: {e}")
 
     def _push_to_server(self) -> None:
-        """Push pending data to server (called after each iteration)."""
-        if self._server_client is None or not self._server_client.is_connected:
+        """Push pending data to server (called after each iteration).
+
+        Always attempts to push if a server client exists, even if previously
+        disconnected. This allows recovery after transient network issues since
+        the client will restore is_connected on successful requests.
+        """
+        if self._server_client is None:
             return
 
         try:
@@ -230,7 +235,7 @@ class GEPATracker:
                     for k, v in delta.pareto_additions.items()
                 }
 
-            self._server_client.push_iteration(
+            success = self._server_client.push_iteration(
                 iteration_number=meta.iteration,
                 timestamp=meta.timestamp,
                 total_evals=meta.total_evals,
@@ -239,7 +244,12 @@ class GEPATracker:
                 pareto_frontier=pareto_frontier,
                 pareto_programs=pareto_programs,
             )
-            self._last_pushed_iteration = meta.iteration
+            # Only update tracking if push succeeded to allow retry on failure
+            if success:
+                self._last_pushed_iteration = meta.iteration
+            else:
+                # Stop processing further iterations if one fails
+                break
 
     def _push_candidates_to_server(self) -> None:
         """Push new candidates to server (incremental - only unpushed deltas)."""
