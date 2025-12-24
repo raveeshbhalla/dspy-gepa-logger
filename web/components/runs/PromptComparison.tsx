@@ -7,7 +7,7 @@ type PromptComparisonProps = {
   seedPrompt: Record<string, string>;
   bestPrompt: Record<string, string>;
   seedCandidateIdx: number;
-  bestCandidateIdx: number;
+  bestCandidateIdx: number | null;
 };
 
 export function PromptComparison({
@@ -49,7 +49,9 @@ export function PromptComparison({
           <TabsList className="mb-4">
             <TabsTrigger value="side-by-side">Side by Side</TabsTrigger>
             <TabsTrigger value="original">Original (#{seedCandidateIdx})</TabsTrigger>
-            <TabsTrigger value="optimized">Optimized (#{bestCandidateIdx})</TabsTrigger>
+            <TabsTrigger value="optimized">
+              Optimized{bestCandidateIdx != null ? ` (#${bestCandidateIdx})` : ""}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="side-by-side">
