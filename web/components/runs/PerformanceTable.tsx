@@ -28,7 +28,7 @@ type Evaluation = {
 type PerformanceTableProps = {
   evaluations: Evaluation[];
   seedCandidateIdx: number;
-  bestCandidateIdx: number;
+  bestCandidateIdx: number | null;
   valsetExampleIds?: string[] | null;
 };
 
@@ -54,7 +54,7 @@ export function PerformanceTable({
 }: PerformanceTableProps) {
   const [selectedEntry, setSelectedEntry] = useState<ComparisonEntry | null>(null);
 
-  const { improvements, regressions, same, avgSeedScore, avgBestScore, avgDelta } = useMemo(() => {
+  const { improvements, regressions, same } = useMemo(() => {
     // Filter to validation set only if valsetExampleIds is provided
     const valsetSet = valsetExampleIds ? new Set(valsetExampleIds) : null;
     const filteredEvaluations = valsetSet
@@ -81,9 +81,29 @@ export function PerformanceTable({
       let bestEval: Evaluation | undefined;
 
       if (hasCandidateIdx) {
-        // Use candidateIdx-based matching
-        seedEval = evals.find((e) => e.candidateIdx === seedCandidateIdx);
-        bestEval = evals.find((e) => e.candidateIdx === bestCandidateIdx);
+        // Seed: candidate 0, fallback to earliest by timestamp
+        seedEval =
+          evals.find((e) => e.candidateIdx === seedCandidateIdx) ??
+          evals.reduce((earliest, current) =>
+            (current.timestamp ?? 0) < (earliest.timestamp ?? 0) ? current : earliest
+          );
+
+        // Best: use bestCandidateIdx if provided (authoritative), otherwise max score
+        if (bestCandidateIdx != null) {
+          // bestCandidateIdx is authoritative - use it even if it equals seed
+          bestEval = evals.find((e) => e.candidateIdx === bestCandidateIdx);
+          // Fallback to max score if best candidate missing for this example
+          if (!bestEval) {
+            bestEval = evals.reduce((best, current) =>
+              current.score > best.score ? current : best
+            , evals[0]);
+          }
+        } else {
+          // No bestCandidateIdx provided - use max score per example
+          bestEval = evals.reduce((best, current) =>
+            current.score > best.score ? current : best
+          , evals[0]);
+        }
       } else {
         // Fallback: timestamp-based comparison (like Python tracker)
         // GEPA doesn't expose candidate_idx through public hooks, so we use
@@ -131,18 +151,7 @@ export function PerformanceTable({
     improvements.sort((a, b) => b.delta - a.delta);
     regressions.sort((a, b) => a.delta - b.delta);
 
-    // Calculate overall averages
-    const allEntries = [...improvements, ...regressions, ...same];
-    const totalEntries = allEntries.length;
-    const avgSeedScore = totalEntries > 0
-      ? allEntries.reduce((sum, e) => sum + e.seedScore, 0) / totalEntries
-      : 0;
-    const avgBestScore = totalEntries > 0
-      ? allEntries.reduce((sum, e) => sum + e.bestScore, 0) / totalEntries
-      : 0;
-    const avgDelta = avgBestScore - avgSeedScore;
-
-    return { improvements, regressions, same, avgSeedScore, avgBestScore, avgDelta };
+    return { improvements, regressions, same };
   }, [evaluations, seedCandidateIdx, bestCandidateIdx, valsetExampleIds]);
 
   const renderTable = (entries: ComparisonEntry[], type: "improve" | "regress" | "same") => {
@@ -219,45 +228,6 @@ export function PerformanceTable({
           <CardTitle className="text-lg">Performance Comparison</CardTitle>
         </CardHeader>
         <CardContent>
-          {/* Overall Average Performance Summary */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <div className="text-center p-3 bg-muted/50 rounded-lg">
-              <p className="text-2xl font-semibold">
-                {(avgSeedScore * 100).toFixed(1)}%
-              </p>
-              <p className="text-xs text-muted-foreground">Avg Seed Score</p>
-            </div>
-            <div className="text-center p-3 bg-muted/50 rounded-lg">
-              <p className="text-2xl font-semibold">
-                {(avgBestScore * 100).toFixed(1)}%
-              </p>
-              <p className="text-xs text-muted-foreground">Avg Best Score</p>
-            </div>
-            <div
-              className={`text-center p-3 rounded-lg ${
-                avgDelta > 0
-                  ? "bg-green-500/10"
-                  : avgDelta < 0
-                  ? "bg-red-500/10"
-                  : "bg-muted/50"
-              }`}
-            >
-              <p
-                className={`text-2xl font-semibold ${
-                  avgDelta > 0
-                    ? "text-green-500"
-                    : avgDelta < 0
-                    ? "text-red-500"
-                    : ""
-                }`}
-              >
-                {avgDelta > 0 ? "+" : ""}
-                {(avgDelta * 100).toFixed(1)}%
-              </p>
-              <p className="text-xs text-muted-foreground">Avg Improvement</p>
-            </div>
-          </div>
-
           <Tabs defaultValue="improvements">
             <TabsList className="mb-4">
               <TabsTrigger value="improvements" className="gap-2">

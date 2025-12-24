@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { StatsCards } from "@/components/runs/StatsCards";
 import { PromptComparison } from "@/components/runs/PromptComparison";
@@ -109,6 +109,87 @@ export default function RunPage() {
     return () => clearInterval(interval);
   }, [runId, run?.status]);
 
+  // Calculate average scores from evaluations (same logic as PerformanceTable)
+  // Must be called before early returns to follow Rules of Hooks
+  const { avgSeedScore, avgBestScore, avgImprovement } = useMemo(() => {
+    if (!run) return { avgSeedScore: null, avgBestScore: null, avgImprovement: null };
+
+    const valsetSet = run.valsetExampleIds ? new Set(run.valsetExampleIds) : null;
+    const filteredEvaluations = valsetSet
+      ? run.evaluations.filter((ev) => valsetSet.has(ev.exampleId))
+      : run.evaluations;
+
+    // Group evaluations by example_id
+    const byExample = new Map<string, typeof filteredEvaluations>();
+    for (const ev of filteredEvaluations) {
+      const existing = byExample.get(ev.exampleId) || [];
+      existing.push(ev);
+      byExample.set(ev.exampleId, existing);
+    }
+
+    const hasCandidateIdx = run.evaluations.some((e) => e.candidateIdx !== null);
+    const seedCandidateIdx = 0;
+
+    const entries: { seedScore: number; bestScore: number }[] = [];
+
+    for (const [, evals] of byExample) {
+      let seedEval: typeof evals[0] | undefined;
+      let bestEval: typeof evals[0] | undefined;
+
+      if (hasCandidateIdx) {
+        // Seed: candidate 0, fallback to earliest by timestamp
+        seedEval =
+          evals.find((e) => e.candidateIdx === seedCandidateIdx) ??
+          evals.reduce((earliest, current) =>
+            (current.timestamp ?? 0) < (earliest.timestamp ?? 0) ? current : earliest
+          );
+
+        // Best: use bestCandidateIdx if provided (authoritative), otherwise max score
+        if (run.bestCandidateIdx != null) {
+          // bestCandidateIdx is authoritative - use it even if it equals seed
+          bestEval = evals.find((e) => e.candidateIdx === run.bestCandidateIdx);
+          // Fallback to max score if best candidate missing for this example
+          if (!bestEval) {
+            bestEval = evals.reduce((best, current) =>
+              current.score > best.score ? current : best
+            , evals[0]);
+          }
+        } else {
+          // No bestCandidateIdx provided - use max score per example
+          bestEval = evals.reduce((best, current) =>
+            current.score > best.score ? current : best
+          , evals[0]);
+        }
+      } else {
+        // Fallback: timestamp-based comparison
+        const sortedEvals = [...evals].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+        if (sortedEvals.length >= 1) {
+          seedEval = sortedEvals[0];
+          bestEval = sortedEvals.reduce((best, current) =>
+            current.score > best.score ? current : best
+          , sortedEvals[0]);
+        }
+      }
+
+      if (seedEval && bestEval) {
+        entries.push({ seedScore: seedEval.score, bestScore: bestEval.score });
+      }
+    }
+
+    if (entries.length === 0) {
+      return { avgSeedScore: null, avgBestScore: null, avgImprovement: null };
+    }
+
+    const avgSeed = entries.reduce((sum, e) => sum + e.seedScore, 0) / entries.length;
+    const avgBest = entries.reduce((sum, e) => sum + e.bestScore, 0) / entries.length;
+
+    return {
+      avgSeedScore: avgSeed,
+      avgBestScore: avgBest,
+      avgImprovement: avgBest - avgSeed,
+    };
+  }, [run]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -152,7 +233,6 @@ export default function RunPage() {
           </p>
         </div>
       </div>
-
       {/* Tabs */}
       <Tabs defaultValue="overview" className="w-full">
         <TabsList>
