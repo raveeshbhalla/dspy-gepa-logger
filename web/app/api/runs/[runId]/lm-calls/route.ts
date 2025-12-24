@@ -20,7 +20,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Create LM calls in batch
+    // Create LM calls in batch, skipping duplicates on retry
     const created = await prisma.lmCall.createMany({
       data: lmCalls.map((lm: {
         callId: string;
@@ -46,6 +46,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         inputs: lm.inputs ? JSON.stringify(lm.inputs) : null,
         outputs: lm.outputs ? JSON.stringify(lm.outputs) : null,
       })),
+      skipDuplicates: true,  // Idempotent - safe to retry on network failures
     });
 
     // Update run stats

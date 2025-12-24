@@ -20,7 +20,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Create evaluations in batch
+    // Create evaluations in batch, skipping duplicates on retry
     const created = await prisma.evaluation.createMany({
       data: evaluations.map((ev: {
         evalId: string;
@@ -48,6 +48,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         predictionRef: ev.predictionRef ?? null,
         timestamp: ev.timestamp,
       })),
+      skipDuplicates: true,  // Idempotent - safe to retry on network failures
     });
 
     // Update run stats

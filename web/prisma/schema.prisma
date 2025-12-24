@@ -102,6 +102,7 @@ model Evaluation {
   timestamp         Float
   createdAt         DateTime @default(now())
 
+  @@unique([runId, evalId])  // Prevent duplicate evaluations on retry
   @@index([runId])
   @@index([runId, exampleId])
   @@index([runId, candidateIdx])
@@ -123,6 +124,7 @@ model LmCall {
   outputs      String?  // JSON stored as string
   createdAt    DateTime @default(now())
 
+  @@unique([runId, callId])  // Prevent duplicate LM calls on retry
   @@index([runId])
   @@index([runId, iteration])
   @@index([runId, phase])
