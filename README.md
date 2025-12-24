@@ -84,6 +84,8 @@ gepa, tracker, logged_metric = create_logged_gepa(
     max_full_evals=3,              # Budget for full evaluations
     track_stats=True,              # Enable statistics tracking
     log_dir=None,                  # Optional: directory for GEPA logs
+    server_url=None,               # Optional: URL for web dashboard real-time updates
+    project_name="Default",        # Optional: project name for organizing runs
     # ... other GEPA kwargs
 )
 ```
@@ -172,7 +174,7 @@ The HTML report includes:
   - **Click any row** to open a modal with full evaluation details
   - Filterable by validation set
 
-![HTML Report Screenshot](docs/report-screenshot.png)
+![Web Dashboard Screenshot](docs/report-screenshot.png)
 
 ## Example
 
@@ -207,7 +209,47 @@ dspy_gepa_logger/
 
 No monkey-patching required - all hooks use public APIs.
 
+## Web Dashboard (Optional)
+
+For a more MLFlow-like experience with persistent history, project organization, and real-time monitoring, you can optionally run the web dashboard.
+
+### Setup
+
+```bash
+cd web
+npm install
+
+# Create .env file with database URL
+echo 'DATABASE_URL="file:./dev.db"' > .env
+
+npx prisma migrate deploy
+npm run dev
+```
+
+### Usage
+
+Simply add `server_url` to your `create_logged_gepa` call:
+
+```python
+gepa, tracker, logged_metric = create_logged_gepa(
+    metric=my_metric,
+    server_url="http://localhost:3000",  # Connect to web server
+    project_name="My Experiment",         # Optional, defaults to "Default"
+)
+```
+
+The tracker will automatically push data to the server as the optimization runs. Open http://localhost:3000 to view:
+
+- **Projects**: Organize runs by project
+- **Run History**: Browse all past optimization runs
+- **Real-time Updates**: Watch ongoing runs with live stats
+- **Evaluation Comparison**: Interactive tables showing improvements/regressions
+- **Prompt Comparison**: Side-by-side view of original vs optimized prompts
+
+Note: Server connection is completely optional. Without `server_url`, all data is captured in-memory and you can still generate HTML reports with `tracker.export_html()`.
+
 ## Requirements
 
 - Python >= 3.10
 - dspy >= 2.5.0
+- requests (optional, for web dashboard)

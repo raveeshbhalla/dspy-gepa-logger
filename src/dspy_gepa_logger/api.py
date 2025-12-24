@@ -45,6 +45,8 @@ def create_logged_gepa(
     wrap_selector: bool = False,
     base_selector: Any | None = None,
     gepa_kwargs: dict[str, Any] | None = None,
+    server_url: str | None = None,
+    project_name: str = "Default",
     **kwargs: Any,
 ) -> tuple[Any, GEPATracker, LoggedMetric]:
     """Create a GEPA optimizer with logging configured.
@@ -63,6 +65,10 @@ def create_logged_gepa(
         wrap_selector: Whether to wrap the selector (default: False)
         base_selector: Custom selector to wrap (if wrap_selector=True)
         gepa_kwargs: Additional kwargs for GEPA's gepa_kwargs parameter
+        server_url: Optional URL of GEPA Logger web server for real-time updates.
+            If provided, run data will be pushed to the server for visualization.
+        project_name: Project name for organizing runs (default: "Default").
+            Only used when server_url is provided.
         **kwargs: Additional kwargs passed to GEPA constructor
 
     Returns:
@@ -71,7 +77,7 @@ def create_logged_gepa(
         - tracker: GEPATracker with all logging hooks
         - logged_metric: The wrapped metric (same as passed to GEPA)
 
-    Example:
+    Example (in-memory only):
         gepa, tracker, logged_metric = create_logged_gepa(
             metric=my_metric,
             num_candidates=3,
@@ -80,7 +86,18 @@ def create_logged_gepa(
 
         configure_dspy_logging(tracker)
         result = gepa.compile(student, trainset=train, valset=val)
-        print(tracker.get_summary())
+        tracker.export_html("report.html")
+
+    Example (with server):
+        gepa, tracker, logged_metric = create_logged_gepa(
+            metric=my_metric,
+            server_url="http://localhost:3000",
+            project_name="My Experiment",
+        )
+
+        configure_dspy_logging(tracker)
+        result = gepa.compile(student, trainset=train, valset=val)
+        tracker.finalize()  # Push remaining data and mark complete
     """
     try:
         from dspy.teleprompt import GEPA
@@ -94,8 +111,12 @@ def create_logged_gepa(
     # If not in kwargs, use the explicit parameter
     gepa_failure_score = kwargs.get("failure_score", failure_score)
 
-    # Create tracker
-    tracker = GEPATracker(capture_lm_calls=capture_lm_calls)
+    # Create tracker with optional server integration
+    tracker = GEPATracker(
+        capture_lm_calls=capture_lm_calls,
+        server_url=server_url,
+        project_name=project_name,
+    )
 
     # Wrap metric with synchronized failure_score
     logged_metric = tracker.wrap_metric(

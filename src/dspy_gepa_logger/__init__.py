@@ -43,7 +43,10 @@ from dspy_gepa_logger.core.logged_proposer import (
 # Context utilities
 from dspy_gepa_logger.core.context import set_ctx, get_ctx, clear_ctx, with_ctx
 
-__version__ = "0.2.0"
+# Server integration (optional)
+from dspy_gepa_logger.server.client import ServerClient
+
+__version__ = "0.3.0"
 
 __all__ = [
     # API functions
@@ -73,4 +76,6 @@ __all__ = [
     "get_ctx",
     "clear_ctx",
     "with_ctx",
+    # Server
+    "ServerClient",
 ]
