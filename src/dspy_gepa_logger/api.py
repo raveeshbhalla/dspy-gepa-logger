@@ -39,8 +39,9 @@ def create_logged_gepa(
     *,
     capture_lm_calls: bool = True,
     capture_prediction: bool = True,
+    capture_stdout: bool = True,
     failure_score: float = 0.0,
-    wrap_proposer: bool = False,
+    wrap_proposer: bool = True,
     base_proposer: Any | None = None,
     wrap_selector: bool = False,
     base_selector: Any | None = None,
@@ -58,9 +59,11 @@ def create_logged_gepa(
         metric: The metric function for evaluation
         capture_lm_calls: Whether to capture LM calls (default: True)
         capture_prediction: Whether to capture predictions (default: True)
+        capture_stdout: Whether to capture stdout/stderr when server_url is set (default: True)
         failure_score: Score to return when metric throws exception (default: 0.0).
             This is synchronized with GEPA's failure_score parameter.
-        wrap_proposer: Whether to wrap the instruction proposer (default: False)
+        wrap_proposer: Whether to wrap the instruction proposer (default: True).
+            Enables capturing reflection/proposal LM calls with proper phase tags.
         base_proposer: Custom instruction proposer to wrap (if wrap_proposer=True)
         wrap_selector: Whether to wrap the selector (default: False)
         base_selector: Custom selector to wrap (if wrap_selector=True)
@@ -116,6 +119,7 @@ def create_logged_gepa(
         capture_lm_calls=capture_lm_calls,
         server_url=server_url,
         project_name=project_name,
+        auto_capture_stdout=capture_stdout and server_url is not None,
     )
 
     # Wrap metric with synchronized failure_score

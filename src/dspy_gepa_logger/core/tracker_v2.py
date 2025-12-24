@@ -299,6 +299,7 @@ class GEPATracker:
         gepa_version: str | None = None,
         server_url: str | None = None,
         project_name: str = "Default",
+        auto_capture_stdout: bool = False,
     ):
         """Initialize the tracker.
 
@@ -308,6 +309,8 @@ class GEPATracker:
             gepa_version: GEPA version (for compatibility info)
             server_url: Optional URL of GEPA Logger web server for real-time updates
             project_name: Project name for organizing runs (default: "Default")
+            auto_capture_stdout: Whether to automatically start stdout/stderr capture
+                when server_url is set (default: False)
         """
         self._start_time: float | None = None
         self._capture_lm_calls = capture_lm_calls
@@ -350,9 +353,13 @@ class GEPATracker:
         self._log_worker: LogPushWorker | None = None
         self._capture_streams = False
         self._atexit_registered = False
+        self._auto_capture_stdout = auto_capture_stdout
 
         if server_url:
             self._init_server_client()
+            # Auto-start stdout capture if requested
+            if auto_capture_stdout:
+                self.start_log_capture()
 
     def set_valset(self, valset: list[Any]) -> None:
         """Set the validation set for comparison filtering.
@@ -633,6 +640,8 @@ class GEPATracker:
 
             pareto_frontier = None
             pareto_programs = None
+            child_candidate_idxs = None
+            parent_candidate_idx = None
             if delta:
                 # Convert pareto data to serializable format
                 pareto_frontier = {k: v[0] for k, v in delta.pareto_additions.items()}
@@ -640,6 +649,36 @@ class GEPATracker:
                     k: min(v[1]) if v[1] else None
                     for k, v in delta.pareto_additions.items()
                 }
+                # Get new candidate indices from this delta
+                if delta.new_candidates:
+                    child_candidate_idxs = [idx for idx, _ in delta.new_candidates]
+                # Get parent from lineage (if any new candidates were created)
+                if delta.new_lineage:
+                    for idx, lineage in delta.new_lineage:
+                        if lineage:
+                            parent_candidate_idx = lineage[0]
+                            break
+
+            # Get reflection/proposal data from proposer logger if available
+            reflection_input = None
+            reflection_output = None
+            proposed_changes = None
+            if self.proposer_logger:
+                # Get reflection LM calls for this iteration
+                reflection_lm_calls = self._get_reflection_lm_calls(meta.iteration)
+                if reflection_lm_calls:
+                    # Use the first reflection call's data
+                    first_call = reflection_lm_calls[0]
+                    reflection_input = json.dumps(first_call.inputs) if first_call.inputs else None
+                    reflection_output = json.dumps(first_call.outputs) if first_call.outputs else None
+
+                # Get proposal data for this iteration
+                proposal_calls = self.proposer_logger.get_proposal_calls_for_iteration(meta.iteration)
+                if proposal_calls:
+                    # Collect all proposed changes
+                    proposed_changes = []
+                    for pc in proposal_calls:
+                        proposed_changes.extend(pc.proposals)
 
             success = self._server_client.push_iteration(
                 iteration_number=meta.iteration,
@@ -649,6 +688,11 @@ class GEPATracker:
                 pareto_size=meta.pareto_size,
                 pareto_frontier=pareto_frontier,
                 pareto_programs=pareto_programs,
+                reflection_input=reflection_input,
+                reflection_output=reflection_output,
+                proposed_changes=proposed_changes,
+                parent_candidate_idx=parent_candidate_idx,
+                child_candidate_idxs=child_candidate_idxs,
             )
             # Only update tracking if push succeeded to allow retry on failure
             if success:
@@ -656,6 +700,15 @@ class GEPATracker:
             else:
                 # Stop processing further iterations if one fails
                 break
+
+    def _get_reflection_lm_calls(self, iteration: int) -> list[LMCall]:
+        """Get LM calls tagged as reflection for a specific iteration."""
+        if self.lm_logger is None:
+            return []
+        return [
+            call for call in self.lm_logger.calls
+            if call.iteration == iteration and call.phase == "reflection"
+        ]
 
     def _push_candidates_to_server(self) -> None:
         """Push new candidates to server (incremental - only unpushed deltas)."""
@@ -806,6 +859,10 @@ class GEPATracker:
             logger.info(f"Run finalized with status: {status}")
         except Exception as e:
             logger.warning(f"Failed to finalize server run: {e}")
+        finally:
+            # Stop log capture if it was auto-started
+            if self._auto_capture_stdout and self._capture_streams:
+                self.stop_log_capture()
 
     @property
     def server_run_id(self) -> str | None:

@@ -151,6 +151,11 @@ class ServerClient:
         pareto_size: int = 0,
         pareto_frontier: dict[str, float] | None = None,
         pareto_programs: dict[str, int] | None = None,
+        reflection_input: str | None = None,
+        reflection_output: str | None = None,
+        proposed_changes: list[dict[str, str]] | None = None,
+        parent_candidate_idx: int | None = None,
+        child_candidate_idxs: list[int] | None = None,
     ) -> bool:
         """Push iteration data to the server.
 
@@ -162,6 +167,11 @@ class ServerClient:
             pareto_size: Size of pareto frontier
             pareto_frontier: Pareto frontier dict (example_id -> score)
             pareto_programs: Programs at pareto front (example_id -> candidate_idx)
+            reflection_input: LM prompt for reflection (JSON string)
+            reflection_output: LM response from reflection (JSON string)
+            proposed_changes: List of proposed prompt changes
+            parent_candidate_idx: Which candidate was mutated
+            child_candidate_idxs: New candidate indices created in this iteration
 
         Returns:
             True if successful, False otherwise
@@ -169,18 +179,32 @@ class ServerClient:
         if not self.run_id:
             return False
 
+        data: dict[str, Any] = {
+            "iterationNumber": iteration_number,
+            "timestamp": timestamp,
+            "totalEvals": total_evals,
+            "numCandidates": num_candidates,
+            "paretoSize": pareto_size,
+            "paretoFrontier": pareto_frontier,
+            "paretoPrograms": pareto_programs,
+        }
+
+        # Add optional reflection/proposal data
+        if reflection_input is not None:
+            data["reflectionInput"] = reflection_input
+        if reflection_output is not None:
+            data["reflectionOutput"] = reflection_output
+        if proposed_changes is not None:
+            data["proposedChanges"] = json.dumps(proposed_changes)
+        if parent_candidate_idx is not None:
+            data["parentCandidateIdx"] = parent_candidate_idx
+        if child_candidate_idxs is not None:
+            data["childCandidateIdxs"] = json.dumps(child_candidate_idxs)
+
         result = self._request(
             "POST",
             f"/api/runs/{self.run_id}/iterations",
-            {
-                "iterationNumber": iteration_number,
-                "timestamp": timestamp,
-                "totalEvals": total_evals,
-                "numCandidates": num_candidates,
-                "paretoSize": pareto_size,
-                "paretoFrontier": pareto_frontier,
-                "paretoPrograms": pareto_programs,
-            },
+            data,
         )
 
         return result is not None
