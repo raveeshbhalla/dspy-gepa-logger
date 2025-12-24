@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PerformanceComparisonTable, type Evaluation as FullEvaluation } from "./PerformanceComparisonTable";
 
 type Candidate = {
   candidateIdx: number;
@@ -16,9 +17,25 @@ type Evaluation = {
   evalId: string;
   exampleId: string;
   candidateIdx: number | null;
+  iteration?: number | null;
   score: number;
   feedback: string | null;
+  exampleInputs: Record<string, unknown> | null;
+  predictionPreview: string | null;
+  predictionRef: Record<string, unknown> | null;
   timestamp?: number;
+};
+
+type Iteration = {
+  iterationNumber: number;
+  timestamp: number;
+  totalEvals: number;
+  numCandidates: number;
+  paretoSize: number;
+  paretoFrontier: Record<string, number> | null;
+  paretoPrograms: Record<string, number> | null;
+  parentCandidateIdx?: number | null;
+  childCandidateIdxs?: string | null;
 };
 
 type TreeNode = {
@@ -37,6 +54,7 @@ type LineageTabProps = {
   bestCandidateIdx: number | null;
   paretoPrograms: Record<string, number> | null;
   valsetExampleIds: string[] | null;
+  iterations: Iteration[];
 };
 
 export function LineageTab({
@@ -45,20 +63,21 @@ export function LineageTab({
   bestCandidateIdx,
   paretoPrograms,
   valsetExampleIds,
+  iterations,
 }: LineageTabProps) {
   const [selectedCandidates, setSelectedCandidates] = useState<number[]>([]);
 
-  // Build tree structure
+  // Build tree structure with improved score calculation using iteration data
   const tree = useMemo(() => {
-    // Calculate average score for each candidate on valset
-    const candidateScores = new Map<number, number[]>();
+    const avgScores = new Map<number, number>();
     const valsetIds = new Set(valsetExampleIds || []);
 
-    // Check if candidateIdx is available
+    // Check if candidateIdx is available in evaluations
     const hasCandidateIdx = evaluations.some((e) => e.candidateIdx !== null);
 
     if (hasCandidateIdx) {
-      // Use candidateIdx-based grouping
+      // Use candidateIdx-based grouping (preferred)
+      const candidateScores = new Map<number, number[]>();
       evaluations.forEach((ev) => {
         if (ev.candidateIdx == null) return;
         if (valsetExampleIds && !valsetIds.has(ev.exampleId)) return;
@@ -68,39 +87,61 @@ export function LineageTab({
         }
         candidateScores.get(ev.candidateIdx)!.push(ev.score);
       });
-    } else {
-      // Fallback: estimate scores by iteration
-      // Group evaluations by exampleId, find max score per example for each candidate
-      // Seed (candidate 0) = first evaluation per example (by timestamp)
-      // Other candidates = can't reliably determine, so skip scoring
-      // At minimum, calculate seed score from first evaluations
-      const byExample = new Map<string, typeof evaluations>();
-      evaluations.forEach((ev) => {
-        if (valsetExampleIds && !valsetIds.has(ev.exampleId)) return;
-        const existing = byExample.get(ev.exampleId) || [];
-        existing.push(ev);
-        byExample.set(ev.exampleId, existing);
-      });
 
-      const seedScores: number[] = [];
-      byExample.forEach((evals) => {
-        // Sort by timestamp, first = seed evaluation
-        const sorted = [...evals].sort((a, b) =>
-          ((a as { timestamp?: number }).timestamp ?? 0) - ((b as { timestamp?: number }).timestamp ?? 0)
-        );
-        if (sorted.length > 0) {
-          seedScores.push(sorted[0].score);
-        }
+      candidateScores.forEach((scores, idx) => {
+        avgScores.set(idx, scores.reduce((a, b) => a + b, 0) / scores.length);
       });
-      if (seedScores.length > 0) {
-        candidateScores.set(0, seedScores);
+    } else {
+      // Fallback: use iteration data to calculate scores
+      // For each iteration, GEPA evaluates parent first, then proposed
+      //
+      // NOTE on GEPA evaluation tagging:
+      // - Proposed evaluations (after reflection) have iteration = iterNum - 1
+      // - Parent evaluations have iteration = NULL (always!)
+      //
+      // So we find proposed evals first, then match parent evals by exampleId + timestamp.
+
+      // Seed candidate score: use valset evals with iteration=NULL for the seed examples
+      // This is the initial baseline evaluation
+      const nullEvals = evaluations.filter((ev) => ev.iteration === null || ev.iteration === undefined);
+      if (nullEvals.length > 0 && valsetExampleIds && valsetExampleIds.length > 0) {
+        // Use the first (earliest) eval per valset example for seed score
+        const valsetSet = new Set(valsetExampleIds);
+        const seedEvalsByExample = new Map<string, Evaluation>();
+        for (const ev of nullEvals) {
+          if (!valsetSet.has(ev.exampleId)) continue;
+          const existing = seedEvalsByExample.get(ev.exampleId);
+          if (!existing || (ev.timestamp ?? 0) < (existing.timestamp ?? 0)) {
+            seedEvalsByExample.set(ev.exampleId, ev);
+          }
+        }
+        if (seedEvalsByExample.size > 0) {
+          const seedScores = Array.from(seedEvalsByExample.values()).map((e) => e.score);
+          avgScores.set(0, seedScores.reduce((a, b) => a + b, 0) / seedScores.length);
+        }
+      }
+
+      // For each iteration with children, get the proposed candidate's score
+      for (const iter of iterations) {
+        const childIdxs: number[] = iter.childCandidateIdxs
+          ? JSON.parse(iter.childCandidateIdxs)
+          : [];
+
+        if (childIdxs.length === 0) continue;
+
+        // Proposed evaluations have iteration = iterNum - 1
+        const targetIteration = iter.iterationNumber - 1;
+        const proposedEvals = evaluations.filter((e) => e.iteration === targetIteration);
+
+        if (proposedEvals.length > 0) {
+          const avgScore = proposedEvals.reduce((a, b) => a + b.score, 0) / proposedEvals.length;
+          // Assign this score to all children created in this iteration
+          for (const childIdx of childIdxs) {
+            avgScores.set(childIdx, avgScore);
+          }
+        }
       }
     }
-
-    const avgScores = new Map<number, number>();
-    candidateScores.forEach((scores, idx) => {
-      avgScores.set(idx, scores.reduce((a, b) => a + b, 0) / scores.length);
-    });
 
     // Determine which candidates are on pareto
     const paretoSet = new Set<number>();
@@ -135,7 +176,7 @@ export function LineageTab({
 
     // Find root (candidate 0)
     return nodes.get(0) || null;
-  }, [candidates, evaluations, paretoPrograms, valsetExampleIds]);
+  }, [candidates, evaluations, paretoPrograms, valsetExampleIds, iterations]);
 
   function toggleCandidate(idx: number) {
     setSelectedCandidates((prev) => {
@@ -147,6 +188,59 @@ export function LineageTab({
       }
       return [...prev, idx];
     });
+  }
+
+  /**
+   * Get evaluations for a specific candidate.
+   * Uses candidateIdx if available, otherwise falls back to iteration-based inference.
+   *
+   * NOTE on GEPA evaluation tagging:
+   * - Proposed evaluations (after reflection) have iteration = iterNum - 1
+   * - Parent/seed evaluations have iteration = NULL
+   */
+  function getCandidateEvaluations(candidateIdx: number): FullEvaluation[] {
+    const valsetIds = new Set(valsetExampleIds || []);
+    const hasCandidateIdx = evaluations.some((e) => e.candidateIdx !== null);
+
+    if (hasCandidateIdx) {
+      // Direct lookup by candidateIdx - filter by valset if specified
+      const filterValset = (ev: Evaluation): boolean =>
+        !valsetExampleIds || valsetIds.has(ev.exampleId);
+      return evaluations
+        .filter((ev) => ev.candidateIdx === candidateIdx && filterValset(ev)) as FullEvaluation[];
+    }
+
+    // Fallback: infer from iteration
+    const candidate = candidates.find((c) => c.candidateIdx === candidateIdx);
+    if (!candidate) return [];
+
+    // Seed candidate - use valset evals with iteration=NULL (baseline evaluations)
+    if (candidateIdx === 0) {
+      if (!valsetExampleIds || valsetExampleIds.length === 0) {
+        // No valset defined - return empty
+        return [];
+      }
+      // Get the first (earliest) eval per valset example
+      const nullEvals = evaluations.filter(
+        (e) => (e.iteration === null || e.iteration === undefined) && valsetIds.has(e.exampleId)
+      );
+      const byExample = new Map<string, Evaluation>();
+      for (const ev of nullEvals) {
+        const existing = byExample.get(ev.exampleId);
+        if (!existing || (ev.timestamp ?? 0) < (existing.timestamp ?? 0)) {
+          byExample.set(ev.exampleId, ev);
+        }
+      }
+      return Array.from(byExample.values()) as FullEvaluation[];
+    }
+
+    // Non-seed - use proposed evals from creation iteration
+    // Proposed evaluations have iteration = creationIter - 1
+    const creationIter = candidate.createdAtIter;
+    if (creationIter == null) return [];
+
+    const targetIteration = creationIter - 1;
+    return evaluations.filter((e) => e.iteration === targetIteration) as FullEvaluation[];
   }
 
   function getNodeColor(node: TreeNode): string {
@@ -416,6 +510,17 @@ export function LineageTab({
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Performance Comparison Table */}
+          <div>
+            <h4 className="font-medium mb-3">Performance Comparison</h4>
+            <PerformanceComparisonTable
+              baseEvaluations={getCandidateEvaluations(idx1)}
+              compareEvaluations={getCandidateEvaluations(idx2)}
+              baseLabel={`Candidate #${idx1}`}
+              compareLabel={`Candidate #${idx2}`}
+            />
           </div>
 
           <Button

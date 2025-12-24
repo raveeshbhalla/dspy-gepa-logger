@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PerformanceComparisonTable, type Evaluation as FullEvaluation } from "./PerformanceComparisonTable";
 
 type Iteration = {
   iterationNumber: number;
@@ -48,6 +49,10 @@ type Evaluation = {
   iteration?: number | null;
   score: number;
   feedback: string | null;
+  exampleInputs: Record<string, unknown> | null;
+  predictionPreview: string | null;
+  predictionRef: Record<string, unknown> | null;
+  timestamp?: number;
 };
 
 type IterationsTabProps = {
@@ -65,26 +70,66 @@ export function IterationsTab({
 }: IterationsTabProps) {
   const [expandedIteration, setExpandedIteration] = useState<number | null>(null);
 
-  // LM calls during iteration N are captured with iteration context N
-  // (the stop_callback sets context after each iteration completes)
-  function getIterationLmCalls(iterNum: number): LmCall[] {
-    return lmCalls.filter((lm) => lm.iteration === iterNum);
-  }
-
   function getReflectionCalls(iterNum: number): LmCall[] {
     return lmCalls.filter(
       (lm) => lm.iteration === iterNum && lm.phase === "reflection"
     );
   }
 
-  function getProposalCalls(iterNum: number): LmCall[] {
-    return lmCalls.filter(
-      (lm) => lm.iteration === iterNum && lm.phase === "proposal"
-    );
-  }
+  /**
+   * Split iteration evaluations into parent vs proposed sets.
+   * Within each iteration, GEPA evaluates parent first, then proposed.
+   *
+   * NOTE on GEPA evaluation tagging:
+   * - Proposed evaluations (after reflection) have iteration = iterNum - 1
+   * - Parent evaluations have iteration = NULL (always!)
+   *
+   * We match parent evals by:
+   * 1. Finding proposed evals by iteration = iterNum - 1
+   * 2. Getting the exampleIds and min timestamp from proposed evals
+   * 3. Finding parent evals from NULL iteration with same exampleIds and earlier timestamp
+   */
+  function getIterationComparison(iterNum: number): {
+    parentEvals: FullEvaluation[];
+    proposedEvals: FullEvaluation[];
+  } {
+    // Proposed evaluations have iteration = iterNum - 1
+    const targetIteration = iterNum - 1;
+    const proposedEvals = evaluations.filter(
+      (ev) => ev.iteration === targetIteration
+    ) as FullEvaluation[];
 
-  function getIterationEvaluations(iterNum: number): Evaluation[] {
-    return evaluations.filter((ev) => ev.iteration === iterNum);
+    if (proposedEvals.length === 0) {
+      return { parentEvals: [], proposedEvals: [] };
+    }
+
+    // Get the exampleIds and min timestamp from proposed evals
+    const proposedExampleIds = new Set(proposedEvals.map((ev) => ev.exampleId));
+    const minProposedTimestamp = Math.min(
+      ...proposedEvals.map((ev) => ev.timestamp ?? Infinity)
+    );
+
+    // Find parent evals: iteration=NULL, same exampleIds, timestamp before proposed
+    // Also filter to only get the most recent NULL eval per exampleId before proposed
+    const candidateParentEvals = evaluations.filter(
+      (ev) =>
+        (ev.iteration === null || ev.iteration === undefined) &&
+        proposedExampleIds.has(ev.exampleId) &&
+        (ev.timestamp ?? 0) < minProposedTimestamp
+    );
+
+    // Group by exampleId and take the most recent (closest to proposed timestamp)
+    const parentByExample = new Map<string, Evaluation>();
+    for (const ev of candidateParentEvals) {
+      const existing = parentByExample.get(ev.exampleId);
+      if (!existing || (ev.timestamp ?? 0) > (existing.timestamp ?? 0)) {
+        parentByExample.set(ev.exampleId, ev);
+      }
+    }
+
+    const parentEvals = Array.from(parentByExample.values()) as FullEvaluation[];
+
+    return { parentEvals, proposedEvals };
   }
 
   function getCandidatesCreatedAt(iterNum: number): Candidate[] {
@@ -216,8 +261,7 @@ export function IterationsTab({
       {iterations.map((iter) => {
         const isExpanded = expandedIteration === iter.iterationNumber;
         const reflectionCalls = getReflectionCalls(iter.iterationNumber);
-        const proposalCalls = getProposalCalls(iter.iterationNumber);
-        const iterEvals = getIterationEvaluations(iter.iterationNumber);
+        const { parentEvals, proposedEvals } = getIterationComparison(iter.iterationNumber);
         const newCandidates = getCandidatesCreatedAt(iter.iterationNumber);
         const parentCandidate = iter.parentCandidateIdx != null
           ? getCandidate(iter.parentCandidateIdx)
@@ -263,11 +307,8 @@ export function IterationsTab({
                     <TabsTrigger value="reflection">
                       Reflection ({reflectionCalls.length})
                     </TabsTrigger>
-                    <TabsTrigger value="proposal">
-                      Proposal ({proposalCalls.length})
-                    </TabsTrigger>
                     <TabsTrigger value="evals">
-                      Evaluations ({iterEvals.length})
+                      Performance Comparison
                     </TabsTrigger>
                   </TabsList>
 
@@ -319,65 +360,13 @@ export function IterationsTab({
                     )}
                   </TabsContent>
 
-                  <TabsContent value="proposal" className="mt-4 space-y-4">
-                    {proposalCalls.length > 0 ? (
-                      proposalCalls.map((call) => (
-                        <div key={call.callId}>
-                          {renderLmCallDetails(call)}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-muted-foreground text-center py-8">
-                        No proposal LM calls recorded for this iteration.
-                      </p>
-                    )}
-                  </TabsContent>
-
                   <TabsContent value="evals" className="mt-4">
-                    {iterEvals.length > 0 ? (
-                      <div className="space-y-2">
-                        <div className="grid grid-cols-4 gap-4 text-sm font-medium text-muted-foreground border-b pb-2">
-                          <span>Example ID</span>
-                          <span>Candidate</span>
-                          <span>Score</span>
-                          <span>Feedback</span>
-                        </div>
-                        {iterEvals.slice(0, 20).map((ev) => (
-                          <div
-                            key={ev.evalId}
-                            className="grid grid-cols-4 gap-4 text-sm py-2 border-b border-muted"
-                          >
-                            <span className="font-mono text-xs truncate">
-                              {ev.exampleId.slice(0, 12)}...
-                            </span>
-                            <span>#{ev.candidateIdx ?? "?"}</span>
-                            <span
-                              className={
-                                ev.score >= 0.7
-                                  ? "text-green-500"
-                                  : ev.score >= 0.4
-                                  ? "text-yellow-500"
-                                  : "text-red-500"
-                              }
-                            >
-                              {(ev.score * 100).toFixed(1)}%
-                            </span>
-                            <span className="text-muted-foreground truncate">
-                              {ev.feedback || "-"}
-                            </span>
-                          </div>
-                        ))}
-                        {iterEvals.length > 20 && (
-                          <p className="text-sm text-muted-foreground text-center pt-2">
-                            ... and {iterEvals.length - 20} more evaluations
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground text-center py-8">
-                        No evaluations recorded for this iteration.
-                      </p>
-                    )}
+                    <PerformanceComparisonTable
+                      baseEvaluations={parentEvals}
+                      compareEvaluations={proposedEvals}
+                      baseLabel={`Parent (#${iter.parentCandidateIdx ?? "?"})`}
+                      compareLabel="Proposed"
+                    />
                   </TabsContent>
                 </Tabs>
               </CardContent>

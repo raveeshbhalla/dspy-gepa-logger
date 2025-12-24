@@ -32,6 +32,7 @@ type Run = {
     candidateIdx: number;
     content: Record<string, string>;
     parentIdx: number | null;
+    createdAtIter?: number | null;
   }>;
   evaluations: Array<{
     evalId: string;
@@ -304,6 +305,7 @@ export default function RunPage() {
                 : null
             }
             valsetExampleIds={run.valsetExampleIds}
+            iterations={run.iterations}
           />
         </TabsContent>
       </Tabs>
