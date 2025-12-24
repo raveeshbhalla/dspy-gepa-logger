@@ -315,6 +315,34 @@ class ServerClient:
 
         return result is not None
 
+    def push_logs(
+        self,
+        logs: list[dict[str, Any]],
+    ) -> bool:
+        """Push a batch of log entries to the server.
+
+        Args:
+            logs: List of log entry dicts with keys:
+                - logType: "stdout", "stderr", "lm_call", "info"
+                - content: Log content (plain text or JSON string)
+                - timestamp: Unix timestamp
+                - iteration: Optional iteration number
+                - phase: Optional phase name
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.run_id or not logs:
+            return False
+
+        result = self._request(
+            "POST",
+            f"/api/runs/{self.run_id}/logs",
+            {"logs": logs},
+        )
+
+        return result is not None
+
     def complete_run(
         self,
         status: str = "COMPLETED",

@@ -5,7 +5,11 @@ import { useParams } from "next/navigation";
 import { StatsCards } from "@/components/runs/StatsCards";
 import { PromptComparison } from "@/components/runs/PromptComparison";
 import { PerformanceTable } from "@/components/runs/PerformanceTable";
+import { LogsTab } from "@/components/runs/LogsTab";
+import { IterationsTab } from "@/components/runs/IterationsTab";
+import { LineageTab } from "@/components/runs/LineageTab";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Run = {
   id: string;
@@ -33,6 +37,7 @@ type Run = {
     evalId: string;
     exampleId: string;
     candidateIdx: number | null;
+    iteration: number | null;
     score: number;
     feedback: string | null;
     exampleInputs: Record<string, unknown> | null;
@@ -42,8 +47,29 @@ type Run = {
   }>;
   iterations: Array<{
     iterationNumber: number;
+    timestamp: number;
     totalEvals: number;
+    numCandidates: number;
     paretoSize: number;
+    paretoFrontier: Record<string, number> | null;
+    paretoPrograms: Record<string, number> | null;
+    reflectionInput?: string | null;
+    reflectionOutput?: string | null;
+    proposedChanges?: string | null;
+    parentCandidateIdx?: number | null;
+    childCandidateIdxs?: string | null;
+  }>;
+  lmCalls: Array<{
+    callId: string;
+    model: string | null;
+    startTime: number;
+    endTime: number | null;
+    durationMs: number | null;
+    iteration: number | null;
+    phase: string | null;
+    candidateIdx: number | null;
+    inputs: Record<string, unknown> | null;
+    outputs: Record<string, unknown> | null;
   }>;
 };
 
@@ -127,33 +153,79 @@ export default function RunPage() {
         </div>
       </div>
 
-      {/* Stats */}
-      <StatsCards
-        iterations={run.totalIterations}
-        candidates={run.totalCandidates}
-        lmCalls={run.totalLmCalls}
-        evaluations={run.totalEvaluations}
-        seedScore={run.seedScore}
-        bestScore={run.bestScore}
-      />
+      {/* Tabs */}
+      <Tabs defaultValue="overview" className="w-full">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="logs">Logs</TabsTrigger>
+          <TabsTrigger value="iterations">Iterations</TabsTrigger>
+          <TabsTrigger value="lineage">Lineage</TabsTrigger>
+        </TabsList>
 
-      {/* Prompt Comparison */}
-      {run.seedPrompt && (
-        <PromptComparison
-          seedPrompt={run.seedPrompt}
-          bestPrompt={run.bestPrompt || run.seedPrompt}
-          seedCandidateIdx={0}
-          bestCandidateIdx={run.bestCandidateIdx || 0}
-        />
-      )}
+        {/* Overview Tab */}
+        <TabsContent value="overview" className="space-y-6 mt-6">
+          {/* Stats */}
+          <StatsCards
+            iterations={run.totalIterations}
+            candidates={run.totalCandidates}
+            lmCalls={run.totalLmCalls}
+            evaluations={run.totalEvaluations}
+            seedScore={run.seedScore}
+            bestScore={run.bestScore}
+          />
 
-      {/* Performance Table */}
-      <PerformanceTable
-        evaluations={run.evaluations}
-        seedCandidateIdx={0}
-        bestCandidateIdx={run.bestCandidateIdx || 0}
-        valsetExampleIds={run.valsetExampleIds}
-      />
+          {/* Prompt Comparison */}
+          {run.seedPrompt && (
+            <PromptComparison
+              seedPrompt={run.seedPrompt}
+              bestPrompt={run.bestPrompt || run.seedPrompt}
+              seedCandidateIdx={0}
+              bestCandidateIdx={run.bestCandidateIdx || 0}
+            />
+          )}
+
+          {/* Performance Table */}
+          <PerformanceTable
+            evaluations={run.evaluations}
+            seedCandidateIdx={0}
+            bestCandidateIdx={run.bestCandidateIdx || 0}
+            valsetExampleIds={run.valsetExampleIds}
+          />
+        </TabsContent>
+
+        {/* Logs Tab */}
+        <TabsContent value="logs" className="mt-6">
+          <LogsTab runId={run.id} isRunning={run.status === "RUNNING"} />
+        </TabsContent>
+
+        {/* Iterations Tab */}
+        <TabsContent value="iterations" className="mt-6">
+          <IterationsTab
+            iterations={run.iterations}
+            lmCalls={run.lmCalls}
+            candidates={run.candidates}
+            evaluations={run.evaluations.map(ev => ({
+              ...ev,
+              iteration: ev.iteration ?? undefined,
+            }))}
+          />
+        </TabsContent>
+
+        {/* Lineage Tab */}
+        <TabsContent value="lineage" className="mt-6">
+          <LineageTab
+            candidates={run.candidates}
+            evaluations={run.evaluations}
+            bestCandidateIdx={run.bestCandidateIdx}
+            paretoPrograms={
+              run.iterations.length > 0
+                ? run.iterations[run.iterations.length - 1].paretoPrograms
+                : null
+            }
+            valsetExampleIds={run.valsetExampleIds}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

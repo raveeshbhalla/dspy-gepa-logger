@@ -2,7 +2,7 @@
 // Maintains a registry of connected clients per run
 
 type RunUpdateEvent = {
-  type: "iteration" | "evaluation" | "candidate" | "lm_call" | "status" | "summary";
+  type: "iteration" | "evaluation" | "candidate" | "lm_call" | "status" | "summary" | "log";
   data: Record<string, unknown>;
 };
 

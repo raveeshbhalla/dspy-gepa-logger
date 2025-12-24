@@ -11,7 +11,7 @@ This is more robust than timestamp-based correlation because:
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .context import get_ctx
 
@@ -66,12 +66,21 @@ class DSPyLMLogger:
             print(f"Iteration {call.iteration}, phase={call.phase}: {call.model}")
     """
 
-    def __init__(self):
-        """Initialize the LM logger."""
+    def __init__(
+        self,
+        on_call_complete: "Callable[[LMCall], None] | None" = None,
+    ):
+        """Initialize the LM logger.
+
+        Args:
+            on_call_complete: Optional callback called when each LM call completes.
+                             Used for real-time streaming to server.
+        """
         self.calls: list[LMCall] = []
         self._pending: dict[str, LMCall] = {}
         self._start_time: float | None = None
         self._call_counter: int = 0
+        self._on_call_complete = on_call_complete
 
     def on_lm_start(
         self, call_id: str, instance: Any, inputs: dict[str, Any]
@@ -143,6 +152,13 @@ class DSPyLMLogger:
 
         self.calls.append(call)
 
+        # Call the callback for real-time streaming
+        if self._on_call_complete is not None:
+            try:
+                self._on_call_complete(call)
+            except Exception:
+                pass  # Don't let callback errors affect normal operation
+
     def on_lm_error(
         self, call_id: str, instance: Any, error: Exception
     ) -> None:
@@ -162,6 +178,13 @@ class DSPyLMLogger:
         call.duration_ms = (call.end_time - call.start_time) * 1000
         call.outputs = {"error": str(error), "error_type": type(error).__name__}
         self.calls.append(call)
+
+        # Call the callback for real-time streaming
+        if self._on_call_complete is not None:
+            try:
+                self._on_call_complete(call)
+            except Exception:
+                pass  # Don't let callback errors affect normal operation
 
     # Stub methods for DSPy 2.5+ callback interface
     # These are called by DSPy but we don't need to handle them

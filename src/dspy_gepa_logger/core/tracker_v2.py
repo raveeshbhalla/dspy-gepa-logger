@@ -30,11 +30,17 @@ Usage:
     print(tracker.get_candidate_diff(0, 5))
 """
 
+import atexit
+import io
 import json
 import logging
+import queue
+import sys
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Generator, TextIO
 
 from .context import clear_ctx, get_ctx
 from .state_logger import GEPAStateLogger, IterationDelta, IterationMetadata
@@ -49,6 +55,209 @@ from .logged_proposer import (
 
 
 logger = logging.getLogger(__name__)
+
+
+class LogPushWorker:
+    """Background worker that pushes log entries from a queue.
+
+    Uses a single worker thread with a bounded queue to avoid
+    unbounded thread creation and ensure logs are delivered.
+    """
+
+    def __init__(
+        self,
+        push_callback: Callable[[str, str, float, int | None, str | None], None],
+        max_queue_size: int = 1000,
+    ):
+        """Initialize the log push worker.
+
+        Args:
+            push_callback: Function to call with (log_type, content, timestamp, iteration, phase)
+            max_queue_size: Max entries to queue before dropping (default: 1000)
+        """
+        self._push_callback = push_callback
+        self._queue: queue.Queue[tuple[str, str, float, int | None, str | None] | None] = queue.Queue(
+            maxsize=max_queue_size
+        )
+        self._worker_thread: threading.Thread | None = None
+        self._running = False
+
+    def start(self) -> None:
+        """Start the worker thread."""
+        if self._running:
+            return
+        self._running = True
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
+
+    def stop(self, timeout: float = 2.0) -> None:
+        """Stop the worker thread and flush remaining logs.
+
+        Args:
+            timeout: Max seconds to wait for queue to drain
+        """
+        if not self._running:
+            return
+        self._running = False
+        # Signal worker to stop
+        try:
+            self._queue.put_nowait(None)
+        except queue.Full:
+            pass
+        # Wait for worker to finish
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=timeout)
+
+    def push(
+        self,
+        log_type: str,
+        content: str,
+        timestamp: float,
+        iteration: int | None,
+        phase: str | None,
+    ) -> None:
+        """Queue a log entry for pushing.
+
+        Non-blocking; drops if queue is full.
+        """
+        if not self._running:
+            return
+        try:
+            self._queue.put_nowait((log_type, content, timestamp, iteration, phase))
+        except queue.Full:
+            pass  # Drop if queue is full
+
+    def _worker_loop(self) -> None:
+        """Worker thread loop that processes the queue."""
+        while self._running or not self._queue.empty():
+            try:
+                item = self._queue.get(timeout=0.1)
+                if item is None:
+                    break
+                log_type, content, timestamp, iteration, phase = item
+                try:
+                    self._push_callback(log_type, content, timestamp, iteration, phase)
+                except Exception:
+                    pass  # Don't let push errors crash the worker
+            except queue.Empty:
+                continue
+
+
+class StreamCapture(io.TextIOBase):
+    """Captures stdout/stderr and pushes to server while preserving original output.
+
+    This class wraps the original stream and:
+    1. Passes all writes through to the original stream
+    2. Buffers content and periodically pushes to the server via a worker queue
+    3. Is thread-safe for concurrent writes
+    """
+
+    def __init__(
+        self,
+        original_stream: TextIO,
+        stream_type: str,  # "stdout" or "stderr"
+        log_worker: LogPushWorker,
+        buffer_size: int = 256,
+        flush_interval: float = 0.5,
+    ):
+        """Initialize the stream capture.
+
+        Args:
+            original_stream: The original sys.stdout or sys.stderr
+            stream_type: "stdout" or "stderr" for log type
+            log_worker: LogPushWorker instance to use for async pushes
+            buffer_size: Max characters to buffer before flushing
+            flush_interval: Max seconds between flushes
+        """
+        super().__init__()
+        self._original = original_stream
+        self._stream_type = stream_type
+        self._log_worker = log_worker
+        self._buffer_size = buffer_size
+        self._flush_interval = flush_interval
+
+        self._buffer: list[str] = []
+        self._buffer_len = 0
+        self._last_flush = time.time()
+        self._lock = threading.Lock()
+
+    def write(self, s: str) -> int:
+        """Write to both original stream and buffer."""
+        if not s:
+            return 0
+
+        # Always write to original stream
+        result = self._original.write(s)
+        # Normalize return value (some streams return None)
+        written = len(s) if result is None else result
+
+        # Buffer for server push
+        with self._lock:
+            self._buffer.append(s)
+            self._buffer_len += len(s)
+
+            # Check if we should flush
+            now = time.time()
+            should_flush = (
+                self._buffer_len >= self._buffer_size or
+                (now - self._last_flush) >= self._flush_interval
+            )
+
+            if should_flush and self._buffer:
+                content = "".join(self._buffer)
+                self._buffer = []
+                self._buffer_len = 0
+                self._last_flush = now
+
+                # Get current context for iteration/phase
+                ctx = get_ctx()
+                iteration = ctx.get("iteration")
+                phase = ctx.get("phase")
+
+                # Queue for async push (non-blocking)
+                self._log_worker.push(self._stream_type, content, now, iteration, phase)
+
+        return written
+
+    def flush(self) -> None:
+        """Flush both original stream and any buffered content."""
+        self._original.flush()
+
+        with self._lock:
+            if self._buffer:
+                content = "".join(self._buffer)
+                self._buffer = []
+                self._buffer_len = 0
+                now = time.time()
+                self._last_flush = now
+
+                ctx = get_ctx()
+                iteration = ctx.get("iteration")
+                phase = ctx.get("phase")
+
+                self._log_worker.push(self._stream_type, content, now, iteration, phase)
+
+    def fileno(self) -> int:
+        """Return the file descriptor of the original stream."""
+        return self._original.fileno()
+
+    @property
+    def encoding(self) -> str:
+        """Return the encoding of the original stream."""
+        return self._original.encoding
+
+    def isatty(self) -> bool:
+        """Return whether the original stream is a TTY."""
+        return self._original.isatty()
+
+    def readable(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return False
 
 
 @dataclass
@@ -108,7 +317,9 @@ class GEPATracker:
             dspy_version=dspy_version,
             gepa_version=gepa_version,
         )
-        self.lm_logger = DSPyLMLogger() if capture_lm_calls else None
+        self.lm_logger = DSPyLMLogger(
+            on_call_complete=self._on_lm_call_complete if server_url else None
+        ) if capture_lm_calls else None
         self.metric_logger: LoggedMetric | None = None
         self.proposer_logger: LoggedInstructionProposer | None = None
         self.selector_logger: LoggedSelector | None = None
@@ -130,6 +341,15 @@ class GEPATracker:
         self._last_pushed_eval_count = 0
         self._last_pushed_lm_count = 0
         self._pending_seed_prompt: dict[str, str] | None = None  # For start_run retries
+
+        # Stream capture for stdout/stderr
+        self._original_stdout: TextIO | None = None
+        self._original_stderr: TextIO | None = None
+        self._stdout_capture: StreamCapture | None = None
+        self._stderr_capture: StreamCapture | None = None
+        self._log_worker: LogPushWorker | None = None
+        self._capture_streams = False
+        self._atexit_registered = False
 
         if server_url:
             self._init_server_client()
@@ -171,6 +391,170 @@ class GEPATracker:
         except Exception as e:
             logger.warning(f"Failed to initialize server client: {e}")
             self._server_client = None
+
+    def _push_log_to_server(
+        self,
+        log_type: str,
+        content: str,
+        timestamp: float,
+        iteration: int | None,
+        phase: str | None,
+    ) -> None:
+        """Push a log entry to the server (called from StreamCapture)."""
+        if self._server_client is None or not self._server_client.run_id:
+            return
+
+        try:
+            self._server_client.push_logs([{
+                "logType": log_type,
+                "content": content,
+                "timestamp": timestamp,
+                "iteration": iteration,
+                "phase": phase,
+            }])
+        except Exception as e:
+            # Don't log this error to avoid infinite recursion with stdout capture
+            pass
+
+    def _cleanup_log_capture(self) -> None:
+        """Cleanup handler for atexit to ensure streams are restored."""
+        if self._capture_streams:
+            self.stop_log_capture()
+
+    def start_log_capture(self) -> None:
+        """Start capturing stdout/stderr and pushing to server.
+
+        Call this before running GEPA optimization to capture all console output.
+        Must call stop_log_capture() when done to restore original streams.
+
+        Prefer using the context manager log_capture() instead:
+            with tracker.log_capture():
+                result = gepa.compile(student, trainset=train, valset=val)
+
+        Example (manual):
+            tracker.start_log_capture()
+            try:
+                result = gepa.compile(student, trainset=train, valset=val)
+            finally:
+                tracker.stop_log_capture()
+        """
+        if self._capture_streams:
+            return  # Already capturing
+
+        if self._server_client is None:
+            logger.warning("Cannot start log capture - no server client configured")
+            return
+
+        # Register atexit handler to restore streams on unexpected exit
+        if not self._atexit_registered:
+            atexit.register(self._cleanup_log_capture)
+            self._atexit_registered = True
+
+        # Create log worker for async push
+        self._log_worker = LogPushWorker(push_callback=self._push_log_to_server)
+        self._log_worker.start()
+
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+
+        self._stdout_capture = StreamCapture(
+            original_stream=self._original_stdout,
+            stream_type="stdout",
+            log_worker=self._log_worker,
+        )
+        self._stderr_capture = StreamCapture(
+            original_stream=self._original_stderr,
+            stream_type="stderr",
+            log_worker=self._log_worker,
+        )
+
+        sys.stdout = self._stdout_capture  # type: ignore
+        sys.stderr = self._stderr_capture  # type: ignore
+        self._capture_streams = True
+
+        logger.info("Started capturing stdout/stderr for server streaming")
+
+    def stop_log_capture(self) -> None:
+        """Stop capturing stdout/stderr and restore original streams.
+
+        Safe to call even if capture wasn't started.
+        """
+        if not self._capture_streams:
+            return
+
+        # Flush any remaining buffered content
+        if self._stdout_capture:
+            self._stdout_capture.flush()
+        if self._stderr_capture:
+            self._stderr_capture.flush()
+
+        # Restore original streams
+        if self._original_stdout:
+            sys.stdout = self._original_stdout
+        if self._original_stderr:
+            sys.stderr = self._original_stderr
+
+        # Stop the log worker (waits for queue to drain)
+        if self._log_worker:
+            self._log_worker.stop()
+            self._log_worker = None
+
+        self._stdout_capture = None
+        self._stderr_capture = None
+        self._original_stdout = None
+        self._original_stderr = None
+        self._capture_streams = False
+
+        logger.info("Stopped capturing stdout/stderr")
+
+    @contextmanager
+    def log_capture(self) -> Generator[None, None, None]:
+        """Context manager for capturing stdout/stderr.
+
+        Automatically starts and stops log capture, ensuring streams
+        are restored even if an exception occurs.
+
+        Example:
+            with tracker.log_capture():
+                result = gepa.compile(student, trainset=train, valset=val)
+        """
+        self.start_log_capture()
+        try:
+            yield
+        finally:
+            self.stop_log_capture()
+
+    def _on_lm_call_complete(self, lm_call: LMCall) -> None:
+        """Called when an LM call completes (for real-time streaming).
+
+        This pushes each LM call to the server immediately, enabling
+        real-time log viewing in the web UI.
+        """
+        if self._server_client is None or not self._server_client.run_id:
+            return
+
+        try:
+            # Push as a log entry for the logs tab
+            log_content = json.dumps({
+                "call_id": lm_call.call_id,
+                "model": lm_call.model,
+                "duration_ms": lm_call.duration_ms,
+                "iteration": lm_call.iteration,
+                "phase": lm_call.phase,
+                "candidate_idx": lm_call.candidate_idx,
+                "inputs_preview": str(lm_call.inputs)[:500] if lm_call.inputs else None,
+                "outputs_preview": str(lm_call.outputs)[:500] if lm_call.outputs else None,
+            })
+
+            self._server_client.push_logs([{
+                "logType": "lm_call",
+                "content": log_content,
+                "timestamp": time.time(),
+                "iteration": lm_call.iteration,
+                "phase": lm_call.phase,
+            }])
+        except Exception:
+            pass  # Don't let streaming errors affect normal operation
 
     def _start_server_run(self, seed_prompt: dict[str, str] | None = None) -> None:
         """Start a run on the server (called when optimization starts)."""
