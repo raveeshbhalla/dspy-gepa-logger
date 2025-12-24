@@ -270,10 +270,10 @@ class GEPATracker:
                 ))
 
         if candidates_to_push:
-            self._server_client.push_candidates(candidates_to_push)
-
-        # Update tracking to include all current deltas
-        self._last_pushed_delta_count = len(self.state_logger.deltas)
+            success = self._server_client.push_candidates(candidates_to_push)
+            # Only update tracking if push succeeded to allow retry on failure
+            if success:
+                self._last_pushed_delta_count = len(self.state_logger.deltas)
 
     def _push_evaluations_to_server(self) -> None:
         """Push new evaluations to server immediately.
@@ -288,8 +288,10 @@ class GEPATracker:
         new_evals = evals[self._last_pushed_eval_count:]
 
         if new_evals:
-            self._server_client.push_evaluations(new_evals)
-            self._last_pushed_eval_count = len(evals)
+            success = self._server_client.push_evaluations(new_evals)
+            # Only update tracking if push succeeded to allow retry on failure
+            if success:
+                self._last_pushed_eval_count = len(evals)
 
     def _push_lm_calls_to_server(self) -> None:
         """Push new LM calls to server immediately.
@@ -304,8 +306,10 @@ class GEPATracker:
         new_calls = calls[self._last_pushed_lm_count:]
 
         if new_calls:
-            self._server_client.push_lm_calls(new_calls)
-            self._last_pushed_lm_count = len(calls)
+            success = self._server_client.push_lm_calls(new_calls)
+            # Only update tracking if push succeeded to allow retry on failure
+            if success:
+                self._last_pushed_lm_count = len(calls)
 
     def finalize(
         self,

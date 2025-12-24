@@ -83,6 +83,11 @@ class ServerClient:
                 timeout=self.timeout,
             )
             response.raise_for_status()
+            # Restore connection status on successful request
+            # This allows recovery after transient network issues
+            if not self._connected and self.run_id:
+                logger.info(f"Reconnected to server at {self.server_url}")
+                self._connected = True
             return response.json()
         except requests.exceptions.ConnectionError:
             if self._connected:
