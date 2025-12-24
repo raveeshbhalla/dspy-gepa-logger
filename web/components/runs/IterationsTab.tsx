@@ -60,6 +60,7 @@ type IterationsTabProps = {
   lmCalls: LmCall[];
   candidates: Candidate[];
   evaluations: Evaluation[];
+  allIterations?: Iteration[]; // All iterations for checking pareto membership
 };
 
 export function IterationsTab({
@@ -67,6 +68,7 @@ export function IterationsTab({
   lmCalls,
   candidates,
   evaluations,
+  allIterations,
 }: IterationsTabProps) {
   const [expandedIteration, setExpandedIteration] = useState<number | null>(null);
 
@@ -138,6 +140,31 @@ export function IterationsTab({
 
   function getCandidate(idx: number): Candidate | undefined {
     return candidates.find((c) => c.candidateIdx === idx);
+  }
+
+  /**
+   * Check if a candidate became part of the pareto frontier in any iteration.
+   * Returns true if candidate is in any iteration's paretoPrograms.
+   */
+  function isCandidateInPareto(candidateIdx: number): boolean {
+    const iters = allIterations || iterations;
+    for (const iter of iters) {
+      if (iter.paretoPrograms) {
+        const paretoIndices = Object.values(iter.paretoPrograms);
+        if (paretoIndices.includes(candidateIdx)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check if any candidate created in this iteration became a pareto candidate.
+   */
+  function didIterationProduceSuccessfulCandidate(iterNum: number): boolean {
+    const createdCandidates = getCandidatesCreatedAt(iterNum);
+    return createdCandidates.some((c) => isCandidateInPareto(c.candidateIdx));
   }
 
   function formatTimestamp(timestamp: number): string {
@@ -266,6 +293,7 @@ export function IterationsTab({
         const parentCandidate = iter.parentCandidateIdx != null
           ? getCandidate(iter.parentCandidateIdx)
           : undefined;
+        const iterationSuccessful = didIterationProduceSuccessfulCandidate(iter.iterationNumber);
 
         return (
           <Card key={iter.iterationNumber}>
@@ -278,7 +306,10 @@ export function IterationsTab({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <CardTitle className="text-lg">
-                    Iteration {iter.iterationNumber + 1}
+                    Iteration {iter.iterationNumber + 1}{" "}
+                    <span title={iterationSuccessful ? "Produced a pareto candidate" : "Did not produce a pareto candidate"}>
+                      {iterationSuccessful ? "✅" : "❌"}
+                    </span>
                   </CardTitle>
                   <Badge variant="secondary">{iter.totalEvals} evals</Badge>
                   <Badge variant="outline">
@@ -308,7 +339,7 @@ export function IterationsTab({
                       Reflection ({reflectionCalls.length})
                     </TabsTrigger>
                     <TabsTrigger value="evals">
-                      Performance Comparison
+                      Performance Comparison ({Math.min(parentEvals.length, proposedEvals.length)})
                     </TabsTrigger>
                   </TabsList>
 
