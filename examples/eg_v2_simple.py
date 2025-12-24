@@ -58,9 +58,13 @@ def get_data():
 def main(use_server: bool = False, server_url: str = "http://localhost:3000"):
     # Configure DSPy
     load_dotenv(".env.local")
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    lm = dspy.LM("openai/gpt-4o-mini", api_key=openai_api_key, temperature=1.0)
-    reflective_lm = dspy.LM("openai/gpt-4o", api_key=openai_api_key, temperature=1.0)
+
+    # Get LM configuration from environment variables
+    lm_model = os.getenv("DSPY_LM", "openai/gpt-4o-mini")
+    reflective_lm_model = os.getenv("DSPY_REFLECTIVE_LM", "openai/gpt-4o")
+
+    lm = dspy.LM(lm_model, temperature=1.0)
+    reflective_lm = dspy.LM(reflective_lm_model, temperature=1.0)
     dspy.configure(lm=lm)
 
     print("=" * 60)
