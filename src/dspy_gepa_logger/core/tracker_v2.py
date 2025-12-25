@@ -723,6 +723,9 @@ class GEPATracker:
                     proposed_changes = []
                     for pc in proposal_calls:
                         proposed_changes.extend(pc.proposals)
+                        # If parent_candidate_idx wasn't set from lineage, get it from proposal
+                        if parent_candidate_idx is None:
+                            parent_candidate_idx = pc.candidate_idx
 
             success = self._server_client.push_iteration(
                 iteration_number=meta.iteration,

@@ -73,8 +73,13 @@ export function IterationsTab({
   const [expandedIteration, setExpandedIteration] = useState<number | null>(null);
 
   function getReflectionCalls(iterNum: number): LmCall[] {
+    // Due to context timing in GEPA, reflection LM calls made during iteration N
+    // are logged with iteration = N-1 (context is set AFTER state callback).
+    // So for iteration N (N > 0), we look for reflection calls with iteration = N-1.
+    // For iteration 0, there are no reflection calls (it's the seed evaluation).
+    const targetIteration = iterNum > 0 ? iterNum - 1 : iterNum;
     return lmCalls.filter(
-      (lm) => lm.iteration === iterNum && lm.phase === "reflection"
+      (lm) => lm.iteration === targetIteration && lm.phase === "reflection"
     );
   }
 
@@ -290,9 +295,24 @@ export function IterationsTab({
         const reflectionCalls = getReflectionCalls(iter.iterationNumber);
         const { parentEvals, proposedEvals } = getIterationComparison(iter.iterationNumber);
         const newCandidates = getCandidatesCreatedAt(iter.iterationNumber);
-        const parentCandidate = iter.parentCandidateIdx != null
+        // Try to get parent candidate from iteration data, or infer from other sources
+        let parentCandidate = iter.parentCandidateIdx != null
           ? getCandidate(iter.parentCandidateIdx)
           : undefined;
+        // Fallback 1: infer parent from parent evaluations' candidateIdx
+        if (!parentCandidate && parentEvals.length > 0) {
+          const parentCandidateIdx = parentEvals[0].candidateIdx;
+          if (parentCandidateIdx != null) {
+            parentCandidate = getCandidate(parentCandidateIdx);
+          }
+        }
+        // Fallback 2: infer parent from reflection calls' candidateIdx
+        if (!parentCandidate && reflectionCalls.length > 0) {
+          const candidateIdx = reflectionCalls[0].candidateIdx;
+          if (candidateIdx != null) {
+            parentCandidate = getCandidate(candidateIdx);
+          }
+        }
         const iterationSuccessful = didIterationProduceSuccessfulCandidate(iter.iterationNumber);
 
         return (
@@ -370,11 +390,109 @@ export function IterationsTab({
                           );
                         })}
                       </div>
-                    ) : (
-                      <p className="text-muted-foreground text-center py-8">
-                        No new candidates created in this iteration.
-                      </p>
-                    )}
+                    ) : (() => {
+                      // Try to extract proposals from: 1) proposedChanges field, 2) reflection call outputs
+                      let proposals: Array<Record<string, string>> = [];
+
+                      // First try proposedChanges field
+                      if (iter.proposedChanges) {
+                        try {
+                          proposals = JSON.parse(iter.proposedChanges);
+                        } catch {
+                          // Invalid JSON, will fall through to reflection output
+                        }
+                      }
+
+                      // If no proposals from proposedChanges, try to extract from reflection call outputs
+                      if (proposals.length === 0 && reflectionCalls.length > 0) {
+                        for (const call of reflectionCalls) {
+                          if (call.outputs) {
+                            const outputs = call.outputs as Record<string, unknown>;
+
+                            // Determine the field name from parent candidate
+                            let fieldName = 'instructions'; // default
+                            if (parentCandidate?.content) {
+                              const keys = Object.keys(parentCandidate.content);
+                              if (keys.length === 1) {
+                                fieldName = keys[0];
+                              }
+                            }
+
+                            // Strategy 1: Look for common DSPy output field names
+                            const proposedInstruction =
+                              outputs.proposed_instruction ||
+                              outputs.proposedInstruction ||
+                              outputs.new_instruction ||
+                              outputs.instruction;
+
+                            if (typeof proposedInstruction === 'string' && proposedInstruction.length > 0) {
+                              proposals.push({ [fieldName]: proposedInstruction });
+                              continue;
+                            }
+
+                            // Strategy 2: Try as object with multiple fields
+                            const proposedInstructions =
+                              outputs.proposed_instructions ||
+                              outputs.proposedInstructions ||
+                              outputs.new_instructions;
+
+                            if (proposedInstructions && typeof proposedInstructions === 'object') {
+                              proposals.push(proposedInstructions as Record<string, string>);
+                              continue;
+                            }
+
+                            // Strategy 3: Extract string fields that look like instructions
+                            // DSPy outputs have the instruction in a field matching the signature output name
+                            const extractedProposal: Record<string, string> = {};
+                            for (const [key, value] of Object.entries(outputs)) {
+                              // Skip metadata/reasoning fields
+                              const lowerKey = key.toLowerCase();
+                              if (
+                                typeof value === 'string' &&
+                                value.length > 20 && // Instructions are typically longer
+                                !['rationale', 'reasoning', 'analysis', 'explanation'].includes(lowerKey)
+                              ) {
+                                // Use the parent's field name if there's only one instruction field
+                                extractedProposal[fieldName] = value;
+                                break; // Take the first substantial string field
+                              }
+                            }
+                            if (Object.keys(extractedProposal).length > 0) {
+                              proposals.push(extractedProposal);
+                            }
+                          }
+                        }
+                      }
+
+                      if (proposals.length === 0 || !parentCandidate) {
+                        return (
+                          <p className="text-muted-foreground text-center py-8">
+                            No prompt changes in this iteration.
+                          </p>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-6">
+                          {proposals.map((proposedContent, idx) => (
+                            <div key={idx}>
+                              <h4 className="font-medium mb-3">
+                                Proposed Change {proposals.length > 1 ? `#${idx + 1}` : ""}
+                                <span className="text-muted-foreground font-normal">
+                                  {" "}(rejected - mutated from #{parentCandidate.candidateIdx})
+                                </span>
+                              </h4>
+                              {renderPromptComparison(
+                                parentCandidate.content,
+                                proposedContent,
+                                `Parent (#${parentCandidate.candidateIdx})`,
+                                "Proposed (rejected)"
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </TabsContent>
 
                   <TabsContent value="reflection" className="mt-4 space-y-4">
