@@ -73,7 +73,8 @@ venv.bak/
 *.sqlite
 *.log
 test_logs/
-logs/
+/logs/
+!/web/app/api/**/logs/
 *.bin
 examples/*.db
 examples/*.log

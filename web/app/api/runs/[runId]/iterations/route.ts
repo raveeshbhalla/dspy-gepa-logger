@@ -19,6 +19,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
       paretoSize,
       paretoFrontier,
       paretoPrograms,
+      reflectionInput,
+      reflectionOutput,
+      proposedChanges,
+      parentCandidateIdx,
+      childCandidateIdxs,
     } = body;
 
     // Create or update iteration
@@ -36,6 +41,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         paretoSize: paretoSize ?? 0,
         paretoFrontier: paretoFrontier ? JSON.stringify(paretoFrontier) : null,
         paretoPrograms: paretoPrograms ? JSON.stringify(paretoPrograms) : null,
+        reflectionInput: reflectionInput ?? null,
+        reflectionOutput: reflectionOutput ?? null,
+        proposedChanges: proposedChanges ?? null,
+        parentCandidateIdx: parentCandidateIdx ?? null,
+        childCandidateIdxs: childCandidateIdxs ?? null,
       },
       create: {
         runId,
@@ -46,6 +56,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         paretoSize: paretoSize ?? 0,
         paretoFrontier: paretoFrontier ? JSON.stringify(paretoFrontier) : null,
         paretoPrograms: paretoPrograms ? JSON.stringify(paretoPrograms) : null,
+        reflectionInput: reflectionInput ?? null,
+        reflectionOutput: reflectionOutput ?? null,
+        proposedChanges: proposedChanges ?? null,
+        parentCandidateIdx: parentCandidateIdx ?? null,
+        childCandidateIdxs: childCandidateIdxs ?? null,
       },
     });
 

@@ -27,7 +27,7 @@ from dspy_gepa_logger.api import (
 )
 
 # Tracker
-from dspy_gepa_logger.core.tracker_v2 import GEPATracker, CandidateDiff
+from dspy_gepa_logger.core.tracker_v2 import GEPATracker, CandidateDiff, LoggedLM
 
 # Components
 from dspy_gepa_logger.core.logged_metric import LoggedMetric, EvaluationRecord
@@ -59,6 +59,7 @@ __all__ = [
     # Tracker
     "GEPATracker",
     "CandidateDiff",
+    "LoggedLM",
     # Components
     "LoggedMetric",
     "EvaluationRecord",

@@ -41,6 +41,7 @@ model Run {
   evaluations      Evaluation[]
   lmCalls          LmCall[]
   candidates       Candidate[]
+  logs             Log[]
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
 
@@ -55,17 +56,22 @@ enum RunStatus {
 }
 
 model Iteration {
-  id              String   @id @default(cuid())
-  runId           String
-  run             Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
-  iterationNumber Int
-  timestamp       Float
-  totalEvals      Int
-  numCandidates   Int      @default(0)
-  paretoSize      Int      @default(0)
-  paretoFrontier  String?  // JSON stored as string
-  paretoPrograms  String?  // JSON stored as string
-  createdAt       DateTime @default(now())
+  id                 String   @id @default(cuid())
+  runId              String
+  run                Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  iterationNumber    Int
+  timestamp          Float
+  totalEvals         Int
+  numCandidates      Int      @default(0)
+  paretoSize         Int      @default(0)
+  paretoFrontier     String?  // JSON stored as string
+  paretoPrograms     String?  // JSON stored as string
+  reflectionInput    String?  // JSON: the prompt sent to LM for reflection
+  reflectionOutput   String?  // JSON: the LM response
+  proposedChanges    String?  // JSON: array of proposed prompt changes
+  parentCandidateIdx Int?     // Which candidate was mutated
+  childCandidateIdxs String?  // JSON: array of new candidate indices created
+  createdAt          DateTime @default(now())
 
   @@unique([runId, iterationNumber])
   @@index([runId])
@@ -128,4 +134,19 @@ model LmCall {
   @@index([runId])
   @@index([runId, iteration])
   @@index([runId, phase])
+}
+
+model Log {
+  id        String   @id @default(cuid())
+  runId     String
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  logType   String   // "stdout", "stderr", "lm_call", "info"
+  content   String   // Plain text for stdout/stderr, JSON for structured logs
+  timestamp Float
+  iteration Int?     // Optional iteration context
+  phase     String?  // Optional phase context
+  createdAt DateTime @default(now())
+
+  @@index([runId])
+  @@index([runId, logType])
 }

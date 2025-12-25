@@ -27,11 +27,14 @@ Example usage:
         print(f"{eval.example_id}: {eval.score}")
 """
 
+import logging
 from typing import Any, Callable
 
-from .core.tracker_v2 import GEPATracker
+from .core.tracker_v2 import GEPATracker, LoggedLM
 from .core.logged_metric import LoggedMetric
 from .core.logged_proposer import LoggedInstructionProposer, LoggedSelector
+
+logger = logging.getLogger(__name__)
 
 
 def create_logged_gepa(
@@ -39,8 +42,9 @@ def create_logged_gepa(
     *,
     capture_lm_calls: bool = True,
     capture_prediction: bool = True,
+    capture_stdout: bool = True,
     failure_score: float = 0.0,
-    wrap_proposer: bool = False,
+    wrap_proposer: bool = True,
     base_proposer: Any | None = None,
     wrap_selector: bool = False,
     base_selector: Any | None = None,
@@ -58,9 +62,11 @@ def create_logged_gepa(
         metric: The metric function for evaluation
         capture_lm_calls: Whether to capture LM calls (default: True)
         capture_prediction: Whether to capture predictions (default: True)
+        capture_stdout: Whether to capture stdout/stderr when server_url is set (default: True)
         failure_score: Score to return when metric throws exception (default: 0.0).
             This is synchronized with GEPA's failure_score parameter.
-        wrap_proposer: Whether to wrap the instruction proposer (default: False)
+        wrap_proposer: Whether to wrap the instruction proposer (default: True).
+            Enables capturing reflection/proposal LM calls with proper phase tags.
         base_proposer: Custom instruction proposer to wrap (if wrap_proposer=True)
         wrap_selector: Whether to wrap the selector (default: False)
         base_selector: Custom selector to wrap (if wrap_selector=True)
@@ -116,6 +122,7 @@ def create_logged_gepa(
         capture_lm_calls=capture_lm_calls,
         server_url=server_url,
         project_name=project_name,
+        auto_capture_stdout=capture_stdout and server_url is not None,
     )
 
     # Wrap metric with synchronized failure_score
@@ -141,21 +148,28 @@ def create_logged_gepa(
     ]
 
     # Handle proposer wrapping
-    if wrap_proposer:
-        if base_proposer is None:
-            from dspy.teleprompt.gepa import DefaultInstructionProposer
-
-            base_proposer = DefaultInstructionProposer()
+    # Note: We only wrap if a base_proposer is provided, since GEPA's internal
+    # default proposer is not easily accessible in newer versions
+    if wrap_proposer and base_proposer is not None:
         kwargs["instruction_proposer"] = tracker.wrap_proposer(base_proposer)
+    elif wrap_proposer and base_proposer is None:
+        logger.debug(
+            "wrap_proposer=True but no base_proposer provided; proposer wrapping skipped. "
+            "To wrap the proposer, pass base_proposer=YourProposer()."
+        )
 
     # Handle selector wrapping
-    if wrap_selector:
-        if base_selector is None:
-            # Use default selector if none provided
-            from dspy.teleprompt.gepa import DefaultSelector
-
-            base_selector = DefaultSelector()
+    # Note: We only wrap if a base_selector is provided
+    if wrap_selector and base_selector is not None:
         kwargs["selector"] = tracker.wrap_selector(base_selector)
+
+    # Wrap reflection_lm to tag its calls with phase="reflection"
+    # This enables proper phase attribution without requiring proposer wrapping
+    if "reflection_lm" in kwargs and kwargs["reflection_lm"] is not None:
+        kwargs["reflection_lm"] = LoggedLM(
+            kwargs["reflection_lm"],
+            phase="reflection",
+        )
 
     # Create GEPA with merged kwargs
     gepa = GEPA(

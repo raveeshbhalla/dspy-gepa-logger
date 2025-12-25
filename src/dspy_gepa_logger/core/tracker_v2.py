@@ -30,13 +30,19 @@ Usage:
     print(tracker.get_candidate_diff(0, 5))
 """
 
+import atexit
+import io
 import json
 import logging
+import queue
+import sys
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Generator, TextIO
 
-from .context import clear_ctx, get_ctx
+from .context import clear_ctx, get_ctx, set_ctx
 from .state_logger import GEPAStateLogger, IterationDelta, IterationMetadata
 from .lm_logger import DSPyLMLogger, LMCall
 from .logged_metric import LoggedMetric, EvaluationRecord
@@ -49,6 +55,272 @@ from .logged_proposer import (
 
 
 logger = logging.getLogger(__name__)
+
+# Global capture state to prevent double-wrapping stdout/stderr
+# when multiple GEPATracker instances exist in the same process
+_global_capture_lock = threading.Lock()
+_global_stdout_capture: "StreamCapture | None" = None
+_global_stderr_capture: "StreamCapture | None" = None
+_global_capture_owner: "GEPATracker | None" = None
+
+
+class LoggedLM:
+    """Wrapper that sets phase context before LM calls.
+
+    This enables proper phase attribution for reflection/proposal LM calls
+    without requiring users to manually wrap the proposer.
+
+    Usage:
+        # Wrap reflection_lm to tag all its calls as 'reflection' phase
+        logged_lm = LoggedLM(reflection_lm, phase="reflection")
+        gepa = GEPA(reflection_lm=logged_lm, ...)
+
+    How it works:
+        1. Before each call: sets phase in context
+        2. LM call executes (DSPyLMLogger will capture with phase tag)
+        3. After call: clears phase from context
+    """
+
+    def __init__(self, base_lm: Any, phase: str):
+        """Initialize the logged LM wrapper.
+
+        Args:
+            base_lm: The LM instance to wrap
+            phase: The phase to tag calls with (e.g., "reflection", "proposal")
+        """
+        self._base_lm = base_lm
+        self._phase = phase
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Execute the LM call with phase context set."""
+        prev_phase = get_ctx().get("phase")
+        set_ctx(phase=self._phase)
+        try:
+            return self._base_lm(*args, **kwargs)
+        finally:
+            set_ctx(phase=prev_phase)
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to base LM.
+
+        This allows the wrapper to be a drop-in replacement for the base LM.
+        """
+        return getattr(self._base_lm, name)
+
+
+class LogPushWorker:
+    """Background worker that pushes log entries from a queue.
+
+    Uses a single worker thread with a bounded queue to avoid
+    unbounded thread creation and ensure logs are delivered.
+    """
+
+    def __init__(
+        self,
+        push_callback: Callable[[str, str, float, int | None, str | None], None],
+        max_queue_size: int = 1000,
+    ):
+        """Initialize the log push worker.
+
+        Args:
+            push_callback: Function to call with (log_type, content, timestamp, iteration, phase)
+            max_queue_size: Max entries to queue before dropping (default: 1000)
+        """
+        self._push_callback = push_callback
+        self._queue: queue.Queue[tuple[str, str, float, int | None, str | None] | None] = queue.Queue(
+            maxsize=max_queue_size
+        )
+        self._worker_thread: threading.Thread | None = None
+        self._running = False
+        self._dropped_count: int = 0
+        self._push_error_count: int = 0
+
+    def start(self) -> None:
+        """Start the worker thread."""
+        if self._running:
+            return
+        self._running = True
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
+
+    def stop(self, timeout: float = 2.0) -> None:
+        """Stop the worker thread and flush remaining logs.
+
+        Args:
+            timeout: Max seconds to wait for queue to drain
+        """
+        if not self._running:
+            return
+        self._running = False
+        # Signal worker to stop
+        try:
+            self._queue.put_nowait(None)
+        except queue.Full:
+            pass
+        # Wait for worker to finish
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=timeout)
+
+    def push(
+        self,
+        log_type: str,
+        content: str,
+        timestamp: float,
+        iteration: int | None,
+        phase: str | None,
+    ) -> None:
+        """Queue a log entry for pushing.
+
+        Non-blocking; drops if queue is full and increments dropped_count.
+        """
+        if not self._running:
+            return
+        try:
+            self._queue.put_nowait((log_type, content, timestamp, iteration, phase))
+        except queue.Full:
+            self._dropped_count += 1
+
+    def _worker_loop(self) -> None:
+        """Worker thread loop that processes the queue."""
+        while self._running or not self._queue.empty():
+            try:
+                item = self._queue.get(timeout=0.1)
+                if item is None:
+                    break
+                log_type, content, timestamp, iteration, phase = item
+                try:
+                    self._push_callback(log_type, content, timestamp, iteration, phase)
+                except Exception:
+                    self._push_error_count += 1
+            except queue.Empty:
+                continue
+
+    @property
+    def dropped_count(self) -> int:
+        """Number of log entries dropped due to full queue."""
+        return self._dropped_count
+
+    @property
+    def push_error_count(self) -> int:
+        """Number of push errors encountered."""
+        return self._push_error_count
+
+
+class StreamCapture(io.TextIOBase):
+    """Captures stdout/stderr and pushes to server while preserving original output.
+
+    This class wraps the original stream and:
+    1. Passes all writes through to the original stream
+    2. Buffers content and periodically pushes to the server via a worker queue
+    3. Is thread-safe for concurrent writes
+    """
+
+    def __init__(
+        self,
+        original_stream: TextIO,
+        stream_type: str,  # "stdout" or "stderr"
+        log_worker: LogPushWorker,
+        buffer_size: int = 256,
+        flush_interval: float = 0.5,
+    ):
+        """Initialize the stream capture.
+
+        Args:
+            original_stream: The original sys.stdout or sys.stderr
+            stream_type: "stdout" or "stderr" for log type
+            log_worker: LogPushWorker instance to use for async pushes
+            buffer_size: Max characters to buffer before flushing
+            flush_interval: Max seconds between flushes
+        """
+        super().__init__()
+        self._original = original_stream
+        self._stream_type = stream_type
+        self._log_worker = log_worker
+        self._buffer_size = buffer_size
+        self._flush_interval = flush_interval
+
+        self._buffer: list[str] = []
+        self._buffer_len = 0
+        self._last_flush = time.time()
+        self._lock = threading.Lock()
+
+    def write(self, s: str) -> int:
+        """Write to both original stream and buffer."""
+        if not s:
+            return 0
+
+        # Always write to original stream
+        result = self._original.write(s)
+        # Normalize return value (some streams return None)
+        written = len(s) if result is None else result
+
+        # Buffer for server push
+        with self._lock:
+            self._buffer.append(s)
+            self._buffer_len += len(s)
+
+            # Check if we should flush
+            now = time.time()
+            should_flush = (
+                self._buffer_len >= self._buffer_size or
+                (now - self._last_flush) >= self._flush_interval
+            )
+
+            if should_flush and self._buffer:
+                content = "".join(self._buffer)
+                self._buffer = []
+                self._buffer_len = 0
+                self._last_flush = now
+
+                # Get current context for iteration/phase
+                ctx = get_ctx()
+                iteration = ctx.get("iteration")
+                phase = ctx.get("phase")
+
+                # Queue for async push (non-blocking)
+                self._log_worker.push(self._stream_type, content, now, iteration, phase)
+
+        return written
+
+    def flush(self) -> None:
+        """Flush both original stream and any buffered content."""
+        self._original.flush()
+
+        with self._lock:
+            if self._buffer:
+                content = "".join(self._buffer)
+                self._buffer = []
+                self._buffer_len = 0
+                now = time.time()
+                self._last_flush = now
+
+                ctx = get_ctx()
+                iteration = ctx.get("iteration")
+                phase = ctx.get("phase")
+
+                self._log_worker.push(self._stream_type, content, now, iteration, phase)
+
+    def fileno(self) -> int:
+        """Return the file descriptor of the original stream."""
+        return self._original.fileno()
+
+    @property
+    def encoding(self) -> str:
+        """Return the encoding of the original stream."""
+        return self._original.encoding
+
+    def isatty(self) -> bool:
+        """Return whether the original stream is a TTY."""
+        return self._original.isatty()
+
+    def readable(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return False
 
 
 @dataclass
@@ -90,6 +362,7 @@ class GEPATracker:
         gepa_version: str | None = None,
         server_url: str | None = None,
         project_name: str = "Default",
+        auto_capture_stdout: bool = False,
     ):
         """Initialize the tracker.
 
@@ -99,6 +372,8 @@ class GEPATracker:
             gepa_version: GEPA version (for compatibility info)
             server_url: Optional URL of GEPA Logger web server for real-time updates
             project_name: Project name for organizing runs (default: "Default")
+            auto_capture_stdout: Whether to automatically start stdout/stderr capture
+                when server_url is set (default: False)
         """
         self._start_time: float | None = None
         self._capture_lm_calls = capture_lm_calls
@@ -108,7 +383,9 @@ class GEPATracker:
             dspy_version=dspy_version,
             gepa_version=gepa_version,
         )
-        self.lm_logger = DSPyLMLogger() if capture_lm_calls else None
+        self.lm_logger = DSPyLMLogger(
+            on_call_complete=self._on_lm_call_complete if server_url else None
+        ) if capture_lm_calls else None
         self.metric_logger: LoggedMetric | None = None
         self.proposer_logger: LoggedInstructionProposer | None = None
         self.selector_logger: LoggedSelector | None = None
@@ -131,8 +408,21 @@ class GEPATracker:
         self._last_pushed_lm_count = 0
         self._pending_seed_prompt: dict[str, str] | None = None  # For start_run retries
 
+        # Stream capture for stdout/stderr
+        self._original_stdout: TextIO | None = None
+        self._original_stderr: TextIO | None = None
+        self._stdout_capture: StreamCapture | None = None
+        self._stderr_capture: StreamCapture | None = None
+        self._log_worker: LogPushWorker | None = None
+        self._capture_streams = False
+        self._atexit_registered = False
+        self._auto_capture_stdout = auto_capture_stdout
+
         if server_url:
             self._init_server_client()
+            # Auto-start stdout capture if requested
+            if auto_capture_stdout:
+                self.start_log_capture()
 
     def set_valset(self, valset: list[Any]) -> None:
         """Set the validation set for comparison filtering.
@@ -171,6 +461,224 @@ class GEPATracker:
         except Exception as e:
             logger.warning(f"Failed to initialize server client: {e}")
             self._server_client = None
+
+    def _push_log_to_server(
+        self,
+        log_type: str,
+        content: str,
+        timestamp: float,
+        iteration: int | None,
+        phase: str | None,
+    ) -> None:
+        """Push a log entry to the server (called from StreamCapture)."""
+        if self._server_client is None or not self._server_client.run_id:
+            return
+
+        try:
+            self._server_client.push_logs([{
+                "logType": log_type,
+                "content": content,
+                "timestamp": timestamp,
+                "iteration": iteration,
+                "phase": phase,
+            }])
+        except Exception as e:
+            # Don't log this error to avoid infinite recursion with stdout capture
+            pass
+
+    def _cleanup_log_capture(self) -> None:
+        """Cleanup handler for atexit to ensure streams are restored."""
+        if self._capture_streams:
+            self.stop_log_capture()
+
+    def start_log_capture(self) -> None:
+        """Start capturing stdout/stderr and pushing to server.
+
+        Call this before running GEPA optimization to capture all console output.
+        Must call stop_log_capture() when done to restore original streams.
+
+        If another tracker is already capturing, this call is a no-op to prevent
+        double-wrapping of streams.
+
+        Prefer using the context manager log_capture() instead:
+            with tracker.log_capture():
+                result = gepa.compile(student, trainset=train, valset=val)
+
+        Example (manual):
+            tracker.start_log_capture()
+            try:
+                result = gepa.compile(student, trainset=train, valset=val)
+            finally:
+                tracker.stop_log_capture()
+        """
+        global _global_stdout_capture, _global_stderr_capture, _global_capture_owner
+
+        if self._capture_streams:
+            return  # Already capturing (this tracker)
+
+        if self._server_client is None:
+            logger.warning("Cannot start log capture - no server client configured")
+            return
+
+        with _global_capture_lock:
+            # Check if another tracker is already capturing
+            if _global_capture_owner is not None and _global_capture_owner is not self:
+                logger.debug(
+                    "Another tracker is already capturing stdout/stderr, skipping"
+                )
+                return
+
+            # Also check if sys.stdout is already a StreamCapture (defensive)
+            if isinstance(sys.stdout, StreamCapture):
+                logger.debug("stdout is already wrapped by StreamCapture, skipping")
+                return
+
+            # Register atexit handler to restore streams on unexpected exit
+            if not self._atexit_registered:
+                atexit.register(self._cleanup_log_capture)
+                self._atexit_registered = True
+
+            # Create log worker for async push
+            self._log_worker = LogPushWorker(push_callback=self._push_log_to_server)
+            self._log_worker.start()
+
+            self._original_stdout = sys.stdout
+            self._original_stderr = sys.stderr
+
+            self._stdout_capture = StreamCapture(
+                original_stream=self._original_stdout,
+                stream_type="stdout",
+                log_worker=self._log_worker,
+            )
+            self._stderr_capture = StreamCapture(
+                original_stream=self._original_stderr,
+                stream_type="stderr",
+                log_worker=self._log_worker,
+            )
+
+            sys.stdout = self._stdout_capture  # type: ignore
+            sys.stderr = self._stderr_capture  # type: ignore
+            self._capture_streams = True
+
+            # Update global state
+            _global_stdout_capture = self._stdout_capture
+            _global_stderr_capture = self._stderr_capture
+            _global_capture_owner = self
+
+        logger.info("Started capturing stdout/stderr for server streaming")
+
+    def stop_log_capture(self) -> None:
+        """Stop capturing stdout/stderr and restore original streams.
+
+        Safe to call even if capture wasn't started.
+
+        Only restores streams if this tracker owns them (i.e., sys.stdout is still
+        the StreamCapture we installed). If something else has replaced sys.stdout,
+        we don't clobber it.
+        """
+        global _global_stdout_capture, _global_stderr_capture, _global_capture_owner
+
+        if not self._capture_streams:
+            return
+
+        with _global_capture_lock:
+            # Flush any remaining buffered content
+            if self._stdout_capture:
+                self._stdout_capture.flush()
+            if self._stderr_capture:
+                self._stderr_capture.flush()
+
+            # Only restore if we still own the streams (haven't been replaced externally)
+            if self._original_stdout and sys.stdout is self._stdout_capture:
+                sys.stdout = self._original_stdout
+            elif self._original_stdout and sys.stdout is not self._stdout_capture:
+                logger.debug(
+                    "stdout was replaced externally, not restoring original"
+                )
+
+            if self._original_stderr and sys.stderr is self._stderr_capture:
+                sys.stderr = self._original_stderr
+            elif self._original_stderr and sys.stderr is not self._stderr_capture:
+                logger.debug(
+                    "stderr was replaced externally, not restoring original"
+                )
+
+            # Stop the log worker (waits for queue to drain)
+            if self._log_worker:
+                # Log dropped/error counts before stopping
+                if self._log_worker.dropped_count > 0:
+                    logger.warning(
+                        f"LogPushWorker dropped {self._log_worker.dropped_count} log entries"
+                    )
+                if self._log_worker.push_error_count > 0:
+                    logger.warning(
+                        f"LogPushWorker encountered {self._log_worker.push_error_count} push errors"
+                    )
+                self._log_worker.stop()
+                self._log_worker = None
+
+            # Clear global state if we were the owner
+            if _global_capture_owner is self:
+                _global_stdout_capture = None
+                _global_stderr_capture = None
+                _global_capture_owner = None
+
+            self._stdout_capture = None
+            self._stderr_capture = None
+            self._original_stdout = None
+            self._original_stderr = None
+            self._capture_streams = False
+
+        logger.info("Stopped capturing stdout/stderr")
+
+    @contextmanager
+    def log_capture(self) -> Generator[None, None, None]:
+        """Context manager for capturing stdout/stderr.
+
+        Automatically starts and stops log capture, ensuring streams
+        are restored even if an exception occurs.
+
+        Example:
+            with tracker.log_capture():
+                result = gepa.compile(student, trainset=train, valset=val)
+        """
+        self.start_log_capture()
+        try:
+            yield
+        finally:
+            self.stop_log_capture()
+
+    def _on_lm_call_complete(self, lm_call: LMCall) -> None:
+        """Called when an LM call completes (for real-time streaming).
+
+        This pushes each LM call to the server immediately, enabling
+        real-time log viewing in the web UI.
+        """
+        if self._server_client is None or not self._server_client.run_id:
+            return
+
+        try:
+            # Push as a log entry for the logs tab
+            log_content = json.dumps({
+                "call_id": lm_call.call_id,
+                "model": lm_call.model,
+                "duration_ms": lm_call.duration_ms,
+                "iteration": lm_call.iteration,
+                "phase": lm_call.phase,
+                "candidate_idx": lm_call.candidate_idx,
+                "inputs_preview": str(lm_call.inputs)[:500] if lm_call.inputs else None,
+                "outputs_preview": str(lm_call.outputs)[:500] if lm_call.outputs else None,
+            })
+
+            self._server_client.push_logs([{
+                "logType": "lm_call",
+                "content": log_content,
+                "timestamp": time.time(),
+                "iteration": lm_call.iteration,
+                "phase": lm_call.phase,
+            }])
+        except Exception:
+            pass  # Don't let streaming errors affect normal operation
 
     def _start_server_run(self, seed_prompt: dict[str, str] | None = None) -> None:
         """Start a run on the server (called when optimization starts)."""
@@ -249,6 +757,8 @@ class GEPATracker:
 
             pareto_frontier = None
             pareto_programs = None
+            child_candidate_idxs = None
+            parent_candidate_idx = None
             if delta:
                 # Convert pareto data to serializable format
                 pareto_frontier = {k: v[0] for k, v in delta.pareto_additions.items()}
@@ -256,6 +766,39 @@ class GEPATracker:
                     k: min(v[1]) if v[1] else None
                     for k, v in delta.pareto_additions.items()
                 }
+                # Get new candidate indices from this delta
+                if delta.new_candidates:
+                    child_candidate_idxs = [idx for idx, _ in delta.new_candidates]
+                # Get parent from lineage (if any new candidates were created)
+                if delta.new_lineage:
+                    for idx, lineage in delta.new_lineage:
+                        if lineage:
+                            parent_candidate_idx = lineage[0]
+                            break
+
+            # Get reflection/proposal data from proposer logger if available
+            reflection_input = None
+            reflection_output = None
+            proposed_changes = None
+            if self.proposer_logger:
+                # Get reflection LM calls for this iteration
+                reflection_lm_calls = self._get_reflection_lm_calls(meta.iteration)
+                if reflection_lm_calls:
+                    # Use the first reflection call's data
+                    first_call = reflection_lm_calls[0]
+                    reflection_input = json.dumps(first_call.inputs) if first_call.inputs else None
+                    reflection_output = json.dumps(first_call.outputs) if first_call.outputs else None
+
+                # Get proposal data for this iteration
+                proposal_calls = self.proposer_logger.get_proposal_calls_for_iteration(meta.iteration)
+                if proposal_calls:
+                    # Collect all proposed changes
+                    proposed_changes = []
+                    for pc in proposal_calls:
+                        proposed_changes.extend(pc.proposals)
+                        # If parent_candidate_idx wasn't set from lineage, get it from proposal
+                        if parent_candidate_idx is None:
+                            parent_candidate_idx = pc.candidate_idx
 
             success = self._server_client.push_iteration(
                 iteration_number=meta.iteration,
@@ -265,6 +808,11 @@ class GEPATracker:
                 pareto_size=meta.pareto_size,
                 pareto_frontier=pareto_frontier,
                 pareto_programs=pareto_programs,
+                reflection_input=reflection_input,
+                reflection_output=reflection_output,
+                proposed_changes=proposed_changes,
+                parent_candidate_idx=parent_candidate_idx,
+                child_candidate_idxs=child_candidate_idxs,
             )
             # Only update tracking if push succeeded to allow retry on failure
             if success:
@@ -272,6 +820,15 @@ class GEPATracker:
             else:
                 # Stop processing further iterations if one fails
                 break
+
+    def _get_reflection_lm_calls(self, iteration: int) -> list[LMCall]:
+        """Get LM calls tagged as reflection for a specific iteration."""
+        if self.lm_logger is None:
+            return []
+        return [
+            call for call in self.lm_logger.calls
+            if call.iteration == iteration and call.phase == "reflection"
+        ]
 
     def _push_candidates_to_server(self) -> None:
         """Push new candidates to server (incremental - only unpushed deltas)."""
@@ -422,6 +979,10 @@ class GEPATracker:
             logger.info(f"Run finalized with status: {status}")
         except Exception as e:
             logger.warning(f"Failed to finalize server run: {e}")
+        finally:
+            # Stop log capture if it was auto-started
+            if self._auto_capture_stdout and self._capture_streams:
+                self.stop_log_capture()
 
     @property
     def server_run_id(self) -> str | None:
