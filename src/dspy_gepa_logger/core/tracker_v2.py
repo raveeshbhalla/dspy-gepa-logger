@@ -56,6 +56,13 @@ from .logged_proposer import (
 
 logger = logging.getLogger(__name__)
 
+# Global capture state to prevent double-wrapping stdout/stderr
+# when multiple GEPATracker instances exist in the same process
+_global_capture_lock = threading.Lock()
+_global_stdout_capture: "StreamCapture | None" = None
+_global_stderr_capture: "StreamCapture | None" = None
+_global_capture_owner: "GEPATracker | None" = None
+
 
 class LoggedLM:
     """Wrapper that sets phase context before LM calls.
@@ -125,6 +132,8 @@ class LogPushWorker:
         )
         self._worker_thread: threading.Thread | None = None
         self._running = False
+        self._dropped_count: int = 0
+        self._push_error_count: int = 0
 
     def start(self) -> None:
         """Start the worker thread."""
@@ -162,14 +171,14 @@ class LogPushWorker:
     ) -> None:
         """Queue a log entry for pushing.
 
-        Non-blocking; drops if queue is full.
+        Non-blocking; drops if queue is full and increments dropped_count.
         """
         if not self._running:
             return
         try:
             self._queue.put_nowait((log_type, content, timestamp, iteration, phase))
         except queue.Full:
-            pass  # Drop if queue is full
+            self._dropped_count += 1
 
     def _worker_loop(self) -> None:
         """Worker thread loop that processes the queue."""
@@ -182,9 +191,19 @@ class LogPushWorker:
                 try:
                     self._push_callback(log_type, content, timestamp, iteration, phase)
                 except Exception:
-                    pass  # Don't let push errors crash the worker
+                    self._push_error_count += 1
             except queue.Empty:
                 continue
+
+    @property
+    def dropped_count(self) -> int:
+        """Number of log entries dropped due to full queue."""
+        return self._dropped_count
+
+    @property
+    def push_error_count(self) -> int:
+        """Number of push errors encountered."""
+        return self._push_error_count
 
 
 class StreamCapture(io.TextIOBase):
@@ -478,6 +497,9 @@ class GEPATracker:
         Call this before running GEPA optimization to capture all console output.
         Must call stop_log_capture() when done to restore original streams.
 
+        If another tracker is already capturing, this call is a no-op to prevent
+        double-wrapping of streams.
+
         Prefer using the context manager log_capture() instead:
             with tracker.log_capture():
                 result = gepa.compile(student, trainset=train, valset=val)
@@ -489,39 +511,59 @@ class GEPATracker:
             finally:
                 tracker.stop_log_capture()
         """
+        global _global_stdout_capture, _global_stderr_capture, _global_capture_owner
+
         if self._capture_streams:
-            return  # Already capturing
+            return  # Already capturing (this tracker)
 
         if self._server_client is None:
             logger.warning("Cannot start log capture - no server client configured")
             return
 
-        # Register atexit handler to restore streams on unexpected exit
-        if not self._atexit_registered:
-            atexit.register(self._cleanup_log_capture)
-            self._atexit_registered = True
+        with _global_capture_lock:
+            # Check if another tracker is already capturing
+            if _global_capture_owner is not None and _global_capture_owner is not self:
+                logger.debug(
+                    "Another tracker is already capturing stdout/stderr, skipping"
+                )
+                return
 
-        # Create log worker for async push
-        self._log_worker = LogPushWorker(push_callback=self._push_log_to_server)
-        self._log_worker.start()
+            # Also check if sys.stdout is already a StreamCapture (defensive)
+            if isinstance(sys.stdout, StreamCapture):
+                logger.debug("stdout is already wrapped by StreamCapture, skipping")
+                return
 
-        self._original_stdout = sys.stdout
-        self._original_stderr = sys.stderr
+            # Register atexit handler to restore streams on unexpected exit
+            if not self._atexit_registered:
+                atexit.register(self._cleanup_log_capture)
+                self._atexit_registered = True
 
-        self._stdout_capture = StreamCapture(
-            original_stream=self._original_stdout,
-            stream_type="stdout",
-            log_worker=self._log_worker,
-        )
-        self._stderr_capture = StreamCapture(
-            original_stream=self._original_stderr,
-            stream_type="stderr",
-            log_worker=self._log_worker,
-        )
+            # Create log worker for async push
+            self._log_worker = LogPushWorker(push_callback=self._push_log_to_server)
+            self._log_worker.start()
 
-        sys.stdout = self._stdout_capture  # type: ignore
-        sys.stderr = self._stderr_capture  # type: ignore
-        self._capture_streams = True
+            self._original_stdout = sys.stdout
+            self._original_stderr = sys.stderr
+
+            self._stdout_capture = StreamCapture(
+                original_stream=self._original_stdout,
+                stream_type="stdout",
+                log_worker=self._log_worker,
+            )
+            self._stderr_capture = StreamCapture(
+                original_stream=self._original_stderr,
+                stream_type="stderr",
+                log_worker=self._log_worker,
+            )
+
+            sys.stdout = self._stdout_capture  # type: ignore
+            sys.stderr = self._stderr_capture  # type: ignore
+            self._capture_streams = True
+
+            # Update global state
+            _global_stdout_capture = self._stdout_capture
+            _global_stderr_capture = self._stderr_capture
+            _global_capture_owner = self
 
         logger.info("Started capturing stdout/stderr for server streaming")
 
@@ -529,32 +571,63 @@ class GEPATracker:
         """Stop capturing stdout/stderr and restore original streams.
 
         Safe to call even if capture wasn't started.
+
+        Only restores streams if this tracker owns them (i.e., sys.stdout is still
+        the StreamCapture we installed). If something else has replaced sys.stdout,
+        we don't clobber it.
         """
+        global _global_stdout_capture, _global_stderr_capture, _global_capture_owner
+
         if not self._capture_streams:
             return
 
-        # Flush any remaining buffered content
-        if self._stdout_capture:
-            self._stdout_capture.flush()
-        if self._stderr_capture:
-            self._stderr_capture.flush()
+        with _global_capture_lock:
+            # Flush any remaining buffered content
+            if self._stdout_capture:
+                self._stdout_capture.flush()
+            if self._stderr_capture:
+                self._stderr_capture.flush()
 
-        # Restore original streams
-        if self._original_stdout:
-            sys.stdout = self._original_stdout
-        if self._original_stderr:
-            sys.stderr = self._original_stderr
+            # Only restore if we still own the streams (haven't been replaced externally)
+            if self._original_stdout and sys.stdout is self._stdout_capture:
+                sys.stdout = self._original_stdout
+            elif self._original_stdout and sys.stdout is not self._stdout_capture:
+                logger.debug(
+                    "stdout was replaced externally, not restoring original"
+                )
 
-        # Stop the log worker (waits for queue to drain)
-        if self._log_worker:
-            self._log_worker.stop()
-            self._log_worker = None
+            if self._original_stderr and sys.stderr is self._stderr_capture:
+                sys.stderr = self._original_stderr
+            elif self._original_stderr and sys.stderr is not self._stderr_capture:
+                logger.debug(
+                    "stderr was replaced externally, not restoring original"
+                )
 
-        self._stdout_capture = None
-        self._stderr_capture = None
-        self._original_stdout = None
-        self._original_stderr = None
-        self._capture_streams = False
+            # Stop the log worker (waits for queue to drain)
+            if self._log_worker:
+                # Log dropped/error counts before stopping
+                if self._log_worker.dropped_count > 0:
+                    logger.warning(
+                        f"LogPushWorker dropped {self._log_worker.dropped_count} log entries"
+                    )
+                if self._log_worker.push_error_count > 0:
+                    logger.warning(
+                        f"LogPushWorker encountered {self._log_worker.push_error_count} push errors"
+                    )
+                self._log_worker.stop()
+                self._log_worker = None
+
+            # Clear global state if we were the owner
+            if _global_capture_owner is self:
+                _global_stdout_capture = None
+                _global_stderr_capture = None
+                _global_capture_owner = None
+
+            self._stdout_capture = None
+            self._stderr_capture = None
+            self._original_stdout = None
+            self._original_stderr = None
+            self._capture_streams = False
 
         logger.info("Stopped capturing stdout/stderr")
 

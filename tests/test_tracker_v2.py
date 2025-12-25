@@ -867,3 +867,230 @@ class TestLoggedLMContextRestoration:
 
         assert logged_lm.model_name == "test-model"
         assert logged_lm.temperature == 0.7
+
+
+class TestLogPushWorker:
+    """Test LogPushWorker functionality."""
+
+    def test_tracks_dropped_logs_when_queue_full(self):
+        """Should count dropped logs when queue is full."""
+        from dspy_gepa_logger.core.tracker_v2 import LogPushWorker
+        import time
+
+        pushed = []
+
+        def slow_push(log_type, content, timestamp, iteration, phase):
+            # Simulate slow push to cause queue backup
+            time.sleep(0.05)
+            pushed.append((log_type, content))
+
+        worker = LogPushWorker(push_callback=slow_push, max_queue_size=2)
+        worker.start()
+
+        # Rapidly push more than queue can hold
+        for i in range(10):
+            worker.push("stdout", f"msg{i}", time.time(), None, None)
+
+        worker.stop(timeout=2.0)
+
+        # Should have dropped some entries
+        assert worker.dropped_count > 0
+        # Some should have been pushed
+        assert len(pushed) > 0
+
+    def test_tracks_push_errors(self):
+        """Should count push errors."""
+        from dspy_gepa_logger.core.tracker_v2 import LogPushWorker
+        import time
+
+        error_count = 0
+
+        def failing_push(log_type, content, timestamp, iteration, phase):
+            nonlocal error_count
+            error_count += 1
+            raise RuntimeError("Push failed")
+
+        worker = LogPushWorker(push_callback=failing_push, max_queue_size=10)
+        worker.start()
+
+        # Push some entries
+        for i in range(3):
+            worker.push("stdout", f"msg{i}", time.time(), None, None)
+
+        # Give worker time to process
+        time.sleep(0.2)
+        worker.stop(timeout=1.0)
+
+        # All pushes should have failed
+        assert worker.push_error_count == error_count
+        assert worker.push_error_count > 0
+
+    def test_properties_accessible(self):
+        """Should expose dropped_count and push_error_count properties."""
+        from dspy_gepa_logger.core.tracker_v2 import LogPushWorker
+
+        worker = LogPushWorker(push_callback=lambda *args: None)
+
+        # Initially zero
+        assert worker.dropped_count == 0
+        assert worker.push_error_count == 0
+
+
+class TestStreamCaptureGlobalGuard:
+    """Test stdout/stderr capture with global double-wrap protection."""
+
+    def setup_method(self):
+        """Reset global capture state before each test."""
+        import sys
+        import dspy_gepa_logger.core.tracker_v2 as tracker_module
+
+        # Clear global state
+        with tracker_module._global_capture_lock:
+            tracker_module._global_stdout_capture = None
+            tracker_module._global_stderr_capture = None
+            tracker_module._global_capture_owner = None
+
+        clear_ctx()
+
+    def test_single_tracker_captures_and_restores(self):
+        """Single tracker should capture and restore stdout correctly."""
+        import sys
+        from unittest.mock import Mock, patch
+
+        original_stdout = sys.stdout
+
+        # Create tracker with mocked server client
+        tracker = GEPATracker()
+        tracker._server_client = Mock()
+        tracker._server_client.run_id = "test-run"
+
+        tracker.start_log_capture()
+        assert tracker._capture_streams is True
+        assert sys.stdout is not original_stdout
+
+        tracker.stop_log_capture()
+        assert tracker._capture_streams is False
+        assert sys.stdout is original_stdout
+
+    def test_second_tracker_skips_capture(self):
+        """Second tracker should not double-wrap stdout."""
+        import sys
+        from unittest.mock import Mock
+        import dspy_gepa_logger.core.tracker_v2 as tracker_module
+
+        original_stdout = sys.stdout
+
+        # First tracker captures
+        tracker1 = GEPATracker()
+        tracker1._server_client = Mock()
+        tracker1._server_client.run_id = "run1"
+        tracker1.start_log_capture()
+
+        wrapped_stdout = sys.stdout
+        assert wrapped_stdout is not original_stdout
+
+        # Second tracker should skip (not double-wrap)
+        tracker2 = GEPATracker()
+        tracker2._server_client = Mock()
+        tracker2._server_client.run_id = "run2"
+        tracker2.start_log_capture()
+
+        # stdout should still be the first wrapper, not double-wrapped
+        assert sys.stdout is wrapped_stdout
+        assert tracker2._capture_streams is False  # tracker2 didn't capture
+
+        # First tracker stops - should restore
+        tracker1.stop_log_capture()
+        assert sys.stdout is original_stdout
+
+    def test_second_tracker_stop_does_not_restore(self):
+        """Second tracker's stop should not affect stdout if it didn't capture."""
+        import sys
+        from unittest.mock import Mock
+
+        original_stdout = sys.stdout
+
+        # First tracker captures
+        tracker1 = GEPATracker()
+        tracker1._server_client = Mock()
+        tracker1._server_client.run_id = "run1"
+        tracker1.start_log_capture()
+
+        wrapped_stdout = sys.stdout
+
+        # Second tracker tries but skips
+        tracker2 = GEPATracker()
+        tracker2._server_client = Mock()
+        tracker2._server_client.run_id = "run2"
+        tracker2.start_log_capture()
+
+        # Second tracker stops - should be no-op
+        tracker2.stop_log_capture()
+        assert sys.stdout is wrapped_stdout  # Still wrapped by tracker1
+
+        # First tracker stops
+        tracker1.stop_log_capture()
+        assert sys.stdout is original_stdout
+
+
+class TestStreamCaptureExternalChanges:
+    """Test that stop_log_capture respects external stream changes."""
+
+    def setup_method(self):
+        """Reset global capture state before each test."""
+        import dspy_gepa_logger.core.tracker_v2 as tracker_module
+
+        with tracker_module._global_capture_lock:
+            tracker_module._global_stdout_capture = None
+            tracker_module._global_stderr_capture = None
+            tracker_module._global_capture_owner = None
+
+        clear_ctx()
+
+    def test_does_not_clobber_external_stdout_change(self):
+        """stop_log_capture should not restore if stdout was externally replaced."""
+        import sys
+        import io
+        from unittest.mock import Mock
+
+        original_stdout = sys.stdout
+
+        # Tracker starts capture
+        tracker = GEPATracker()
+        tracker._server_client = Mock()
+        tracker._server_client.run_id = "test"
+        tracker.start_log_capture()
+
+        our_capture = sys.stdout
+
+        # External code replaces stdout
+        external_stream = io.StringIO()
+        sys.stdout = external_stream
+
+        # Tracker stops - should NOT restore to original because
+        # current stdout is not our capture
+        tracker.stop_log_capture()
+
+        # External stream should still be in place
+        assert sys.stdout is external_stream
+
+        # Cleanup
+        sys.stdout = original_stdout
+
+    def test_restores_when_still_owning_stream(self):
+        """stop_log_capture should restore if we still own stdout."""
+        import sys
+        from unittest.mock import Mock
+
+        original_stdout = sys.stdout
+
+        tracker = GEPATracker()
+        tracker._server_client = Mock()
+        tracker._server_client.run_id = "test"
+        tracker.start_log_capture()
+
+        # No external changes - we still own it
+        tracker.stop_log_capture()
+
+        # Should be restored
+        assert sys.stdout is original_stdout

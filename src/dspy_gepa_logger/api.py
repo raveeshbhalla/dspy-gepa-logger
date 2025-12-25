@@ -27,11 +27,14 @@ Example usage:
         print(f"{eval.example_id}: {eval.score}")
 """
 
+import logging
 from typing import Any, Callable
 
 from .core.tracker_v2 import GEPATracker, LoggedLM
 from .core.logged_metric import LoggedMetric
 from .core.logged_proposer import LoggedInstructionProposer, LoggedSelector
+
+logger = logging.getLogger(__name__)
 
 
 def create_logged_gepa(
@@ -149,6 +152,11 @@ def create_logged_gepa(
     # default proposer is not easily accessible in newer versions
     if wrap_proposer and base_proposer is not None:
         kwargs["instruction_proposer"] = tracker.wrap_proposer(base_proposer)
+    elif wrap_proposer and base_proposer is None:
+        logger.debug(
+            "wrap_proposer=True but no base_proposer provided; proposer wrapping skipped. "
+            "To wrap the proposer, pass base_proposer=YourProposer()."
+        )
 
     # Handle selector wrapping
     # Note: We only wrap if a base_selector is provided
