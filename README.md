@@ -14,6 +14,12 @@ Lightweight logging and visualization for DSPy GEPA optimization runs. Track eva
 ## Installation
 
 ```bash
+pip install dspy-GEPA-logger
+```
+
+Or install from GitHub:
+
+```bash
 pip install git+https://github.com/raveeshbhalla/dspy-gepa-logger.git
 ```
 
