@@ -12,6 +12,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { Trash2 } from "lucide-react";
 
 type Project = {
   id: string;
@@ -117,6 +118,33 @@ export function Sidebar() {
     ? pathname.split("/")[2]
     : null;
 
+  const handleDeleteRun = useCallback(async (e: React.MouseEvent, runId: string) => {
+    e.stopPropagation();
+
+    try {
+      const res = await fetch(`/api/runs/${runId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete run");
+
+      // Refresh runs list
+      if (selectedProjectId) {
+        fetchRuns(selectedProjectId);
+      }
+
+      // Update project counts
+      fetch("/api/projects")
+        .then((res) => res.json())
+        .then(setProjects)
+        .catch(console.error);
+
+      // Navigate away if we deleted the current run
+      if (currentRunId === runId) {
+        router.push("/");
+      }
+    } catch (error) {
+      console.error("Failed to delete run:", error);
+    }
+  }, [selectedProjectId, fetchRuns, currentRunId, router]);
+
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     const now = new Date();
@@ -181,17 +209,24 @@ export function Sidebar() {
                   key={run.id}
                   onClick={() => router.push(`/runs/${run.id}`)}
                   className={cn(
-                    "w-full text-left p-3 rounded-lg mb-1 transition-colors",
+                    "w-full text-left p-3 rounded-lg mb-1 transition-colors group",
                     "hover:bg-accent",
                     currentRunId === run.id
                       ? "bg-accent"
                       : "bg-transparent"
                   )}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium truncate">
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <span className="text-sm font-medium truncate flex-1">
                       {run.name || `Run ${run.id.slice(0, 8)}`}
                     </span>
+                    <button
+                      onClick={(e) => handleDeleteRun(e, run.id)}
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/20 hover:text-destructive transition-opacity"
+                      title="Delete run"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                     <StatusBadge status={run.status} />
                   </div>
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
