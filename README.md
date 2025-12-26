@@ -219,18 +219,39 @@ No monkey-patching required - all hooks use public APIs.
 
 For a more MLFlow-like experience with persistent history, project organization, and real-time monitoring, you can optionally run the web dashboard.
 
+### Requirements
+
+- Node.js 20.19+, 22.12+, or 24.0+ (required by Prisma)
+
 ### Setup
+
+1. Navigate to the web directory and install dependencies:
 
 ```bash
 cd web
 npm install
+```
 
-# Create .env file with database URL
+2. Create a `.env` file with the database URL:
+
+```bash
 echo 'DATABASE_URL="file:./dev.db"' > .env
+```
 
+3. Generate the Prisma client and run database migrations:
+
+```bash
+npx prisma generate
 npx prisma migrate deploy
+```
+
+4. Start the development server:
+
+```bash
 npm run dev
 ```
+
+The dashboard will be available at http://localhost:3000.
 
 ### Usage
 
