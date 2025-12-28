@@ -137,7 +137,7 @@ class DspyAdapter(GEPAAdapter[Example, TraceData, Prediction]):
 
         if isinstance(eval_batch.trajectories, str):
             feedback = eval_batch.trajectories
-            return {"program": {"Feedback": feedback}}
+            return {"program": [{"Feedback": feedback}]}
 
         ########
         items: list[dict[str, Any]] = []
@@ -240,10 +240,6 @@ class DspyAdapter(GEPAAdapter[Example, TraceData, Prediction]):
             raise Exception("No valid predictions found for program.")
 
         ret_d["program"] = items
-
-        ########
-        if len(ret_d) == 0:
-            raise Exception("No valid predictions found for any module.")
 
         return ret_d
 

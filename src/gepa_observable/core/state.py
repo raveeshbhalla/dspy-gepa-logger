@@ -202,13 +202,17 @@ class GEPAState(Generic[RolloutOutput, DataId]):
                     with open(os.path.join(task_dir, f"iter_{iteration}_prog_{program_idx}.json"), "w") as fout:
                         json.dump(output, fout, indent=4, default=json_default)
         elif score == prev_score:
-            assert self.program_at_pareto_front_valset.get(val_id), (
-                f"Program at pareto front for val_id {val_id} should be non-empty"
-            )
-            pareto_front = self.program_at_pareto_front_valset[val_id]
-            pareto_front.add(program_idx)
-            if self.best_outputs_valset is not None and output is not None:
-                self.best_outputs_valset[val_id].append((program_idx, output))
+            pareto_front = self.program_at_pareto_front_valset.get(val_id)
+            if pareto_front is None:
+                # Initialize pareto front for this val_id (can happen if prev_score was -inf)
+                self.pareto_front_valset[val_id] = score
+                self.program_at_pareto_front_valset[val_id] = {program_idx}
+                if self.best_outputs_valset is not None and output is not None:
+                    self.best_outputs_valset[val_id] = [(program_idx, output)]
+            else:
+                pareto_front.add(program_idx)
+                if self.best_outputs_valset is not None and output is not None:
+                    self.best_outputs_valset[val_id].append((program_idx, output))
 
     def update_state_with_new_program(
         self,

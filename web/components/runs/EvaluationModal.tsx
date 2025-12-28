@@ -60,7 +60,7 @@ function parsePredictionString(predStr: string): Record<string, string> | null {
     const key = match[1];
     const value = match[2] ?? match[3] ?? "";
     // Unescape common escapes
-    fields[key] = value.replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\'/g, "'");
+    fields[key] = value.replace(/\\\\/g, "\\").replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\'/g, "'");
   }
 
   return Object.keys(fields).length > 0 ? fields : null;

@@ -375,7 +375,7 @@ class ServerObserver:
         if not self.client.is_connected:
             return
 
-        self.seed_score = sum(event.valset_scores.values()) / len(event.valset_scores)
+        self.seed_score = (sum(event.valset_scores.values()) / len(event.valset_scores)) if event.valset_scores else None
         self.total_evals = event.total_evals
         self.pareto_candidates.add(0)  # Seed starts on pareto front
 
