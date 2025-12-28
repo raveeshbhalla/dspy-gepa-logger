@@ -18,6 +18,7 @@ type Evaluation = {
   exampleId: string;
   candidateIdx: number | null;
   iteration?: number | null;
+  phase?: string;
   score: number;
   feedback: string | null;
   exampleInputs: Record<string, unknown> | null;
@@ -71,6 +72,9 @@ export function LineageTab({
   const tree = useMemo(() => {
     const avgScores = new Map<number, number>();
     const valsetIds = new Set(valsetExampleIds || []);
+    // Only use valset evaluations (seed_validation and valset phases)
+    // Exclude minibatch_parent and minibatch_new which are exploratory evaluations
+    const valsetPhases = new Set(["seed_validation", "valset"]);
 
     // Check if candidateIdx is available in evaluations
     const hasCandidateIdx = evaluations.some((e) => e.candidateIdx !== null);
@@ -81,6 +85,8 @@ export function LineageTab({
       evaluations.forEach((ev) => {
         if (ev.candidateIdx == null) return;
         if (valsetExampleIds && !valsetIds.has(ev.exampleId)) return;
+        // Filter to only valset phases (exclude minibatch evaluations)
+        if (ev.phase && !valsetPhases.has(ev.phase)) return;
 
         if (!candidateScores.has(ev.candidateIdx)) {
           candidateScores.set(ev.candidateIdx, []);
@@ -200,14 +206,18 @@ export function LineageTab({
    */
   function getCandidateEvaluations(candidateIdx: number): FullEvaluation[] {
     const valsetIds = new Set(valsetExampleIds || []);
+    // Only use valset evaluations (seed_validation and valset phases)
+    const valsetPhases = new Set(["seed_validation", "valset"]);
     const hasCandidateIdx = evaluations.some((e) => e.candidateIdx !== null);
 
     if (hasCandidateIdx) {
       // Direct lookup by candidateIdx - filter by valset if specified
       const filterValset = (ev: Evaluation): boolean =>
         !valsetExampleIds || valsetIds.has(ev.exampleId);
+      const filterPhase = (ev: Evaluation): boolean =>
+        !ev.phase || valsetPhases.has(ev.phase);
       return evaluations
-        .filter((ev) => ev.candidateIdx === candidateIdx && filterValset(ev)) as FullEvaluation[];
+        .filter((ev) => ev.candidateIdx === candidateIdx && filterValset(ev) && filterPhase(ev)) as FullEvaluation[];
     }
 
     // Fallback: infer from iteration
@@ -348,6 +358,8 @@ export function LineageTab({
 
     // Get scores for both candidates
     const valsetIds = new Set(valsetExampleIds || []);
+    // Only use valset evaluations (seed_validation and valset phases)
+    const valsetPhases = new Set(["seed_validation", "valset"]);
     const hasCandidateIdx = evaluations.some((e) => e.candidateIdx !== null);
 
     let avgScore1: number | null = null;
@@ -358,12 +370,14 @@ export function LineageTab({
       const cand1Evals = evaluations.filter(
         (ev) =>
           ev.candidateIdx === idx1 &&
-          (valsetExampleIds ? valsetIds.has(ev.exampleId) : true)
+          (valsetExampleIds ? valsetIds.has(ev.exampleId) : true) &&
+          (!ev.phase || valsetPhases.has(ev.phase))
       );
       const cand2Evals = evaluations.filter(
         (ev) =>
           ev.candidateIdx === idx2 &&
-          (valsetExampleIds ? valsetIds.has(ev.exampleId) : true)
+          (valsetExampleIds ? valsetIds.has(ev.exampleId) : true) &&
+          (!ev.phase || valsetPhases.has(ev.phase))
       );
 
       avgScore1 =

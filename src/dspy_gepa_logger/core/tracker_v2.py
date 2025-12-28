@@ -446,7 +446,12 @@ class GEPATracker:
     # ==================== Server Integration ====================
 
     def _init_server_client(self) -> None:
-        """Initialize the server client and start a new run."""
+        """Initialize the server client and start a new run.
+
+        We start the run immediately (even without seed_prompt) so that
+        log capture can begin pushing logs to the server. The seed_prompt
+        and other metadata will be updated on the first iteration callback.
+        """
         try:
             from ..server.client import ServerClient
 
@@ -455,6 +460,20 @@ class GEPATracker:
                 project_name=self._project_name,
             )
             logger.info(f"Server client initialized for {self._server_url}")
+
+            # Start the run immediately so logs can be pushed before optimization starts.
+            # We'll update seed_prompt and other metadata on the first iteration.
+            run_id = self._server_client.start_run(
+                config={
+                    "dspy_version": self.state_logger.versions.get("dspy"),
+                    "gepa_version": self.state_logger.versions.get("gepa"),
+                    "capture_lm_calls": self._capture_lm_calls,
+                },
+            )
+            if run_id:
+                logger.info(f"Server run started: {run_id}")
+            else:
+                logger.warning("Failed to start server run - logs may not be pushed")
         except ImportError:
             logger.warning("Could not import ServerClient - server integration disabled")
             self._server_client = None
@@ -680,28 +699,51 @@ class GEPATracker:
         except Exception:
             pass  # Don't let streaming errors affect normal operation
 
-    def _start_server_run(self, seed_prompt: dict[str, str] | None = None) -> None:
-        """Start a run on the server (called when optimization starts)."""
-        if self._server_client is None:
+    def _update_server_run(self, seed_prompt: dict[str, str] | None = None) -> None:
+        """Update the run with seed_prompt and valset (called on first iteration).
+
+        The run is created in _init_server_client, but we update it here with
+        seed_prompt and valset_example_ids once they're available.
+        """
+        if self._server_client is None or self._server_client.run_id is None:
             return
 
         try:
             # Convert valset example IDs to list for JSON serialization
             valset_ids = list(self._valset_example_ids) if self._valset_example_ids else None
 
+            success = self._server_client.update_run(
+                seed_prompt=seed_prompt,
+                valset_example_ids=valset_ids,
+            )
+            if success:
+                logger.info(f"Updated run {self._server_client.run_id} with seed_prompt")
+        except Exception as e:
+            logger.warning(f"Failed to update server run: {e}")
+
+    def _retry_start_server_run(self) -> None:
+        """Retry starting the server run if it failed during init.
+
+        Called from _push_to_server if the run_id is None.
+        """
+        if self._server_client is None:
+            return
+
+        try:
             run_id = self._server_client.start_run(
                 config={
                     "dspy_version": self.state_logger.versions.get("dspy"),
                     "gepa_version": self.state_logger.versions.get("gepa"),
                     "capture_lm_calls": self._capture_lm_calls,
                 },
-                seed_prompt=seed_prompt,
-                valset_example_ids=valset_ids,
             )
             if run_id:
-                logger.info(f"Server run started: {run_id}")
+                logger.info(f"Server run started on retry: {run_id}")
+                # If we have a pending seed_prompt, update the run with it
+                if self._pending_seed_prompt:
+                    self._update_server_run(self._pending_seed_prompt)
         except Exception as e:
-            logger.warning(f"Failed to start server run: {e}")
+            logger.warning(f"Failed to start server run on retry: {e}")
 
     def _push_to_server(self) -> None:
         """Push pending data to server (called after each iteration).
@@ -718,10 +760,10 @@ class GEPATracker:
 
         try:
             # Retry start_run if it previously failed
-            # This handles cases where the server was down during the first callback
-            if self._server_client.run_id is None and self._pending_seed_prompt is not None:
+            # This handles cases where the server was down during init
+            if self._server_client.run_id is None:
                 logger.info("Retrying start_run (server was unavailable previously)")
-                self._start_server_run(self._pending_seed_prompt)
+                self._retry_start_server_run()
                 # If still no run_id, skip pushing this time (will retry next iteration)
                 if self._server_client.run_id is None:
                     return
@@ -920,9 +962,9 @@ class GEPATracker:
         try:
             # Retry start_run if it previously failed (server was down during optimization)
             # This ensures we can still push all data if the server comes back before finalize
-            if self._server_client.run_id is None and self._pending_seed_prompt is not None:
+            if self._server_client.run_id is None:
                 logger.info("Retrying start_run in finalize (server was unavailable previously)")
-                self._start_server_run(self._pending_seed_prompt)
+                self._retry_start_server_run()
                 if self._server_client.run_id is None:
                     logger.warning("Could not start server run - data will not be pushed")
                     return
@@ -1076,15 +1118,16 @@ class GEPATracker:
         """
 
         def stop_callback_with_server_push(state: Any) -> bool:
-            # First iteration - start the server run
+            # First iteration - update the run with seed_prompt and valset
             is_first_iteration = len(self.state_logger.deltas) == 0
             if is_first_iteration and self._server_client is not None:
                 # Extract seed prompt from state if available
                 candidates = getattr(state, "program_candidates", [])
                 seed_prompt = candidates[0] if candidates else None
-                # Store seed prompt for potential retries if start_run fails
+                # Store seed prompt for potential retries
                 self._pending_seed_prompt = seed_prompt
-                self._start_server_run(seed_prompt)
+                # Update the run with seed_prompt and valset (run was created in _init_server_client)
+                self._update_server_run(seed_prompt)
 
             # Call the original state logger
             result = self.state_logger(state)

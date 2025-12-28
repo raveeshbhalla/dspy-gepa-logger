@@ -61,7 +61,8 @@ export function PerformanceComparisonTable({
   baseLabel = "Base",
   compareLabel = "Compare",
 }: PerformanceComparisonTableProps) {
-  const [selectedEntry, setSelectedEntry] = useState<ComparisonEntry | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"improvements" | "regressions" | "same">("improvements");
 
   const { improvements, regressions, same } = useMemo(() => {
     // Create lookup maps by exampleId
@@ -122,6 +123,29 @@ export function PerformanceComparisonTable({
     return { improvements, regressions, same };
   }, [baseEvaluations, compareEvaluations]);
 
+  // Get the current entries based on active tab
+  const getCurrentEntries = () => {
+    switch (activeTab) {
+      case "improvements": return improvements;
+      case "regressions": return regressions;
+      case "same": return same;
+    }
+  };
+
+  const currentEntries = getCurrentEntries();
+  const selectedEntry = selectedIndex !== null ? currentEntries[selectedIndex] : null;
+
+  const handleNavigate = (index: number) => {
+    if (index >= 0 && index < currentEntries.length) {
+      setSelectedIndex(index);
+    }
+  };
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value as "improvements" | "regressions" | "same");
+    setSelectedIndex(null);
+  };
+
   const renderTable = (entries: ComparisonEntry[], type: "improve" | "regress" | "same") => {
     if (entries.length === 0) {
       return (
@@ -154,7 +178,7 @@ export function PerformanceComparisonTable({
             <TableRow
               key={entry.exampleId}
               className="cursor-pointer hover:bg-accent"
-              onClick={() => setSelectedEntry(entry)}
+              onClick={() => setSelectedIndex(idx)}
             >
               <TableCell className="font-mono text-xs text-muted-foreground">
                 {idx + 1}
@@ -200,7 +224,7 @@ export function PerformanceComparisonTable({
 
   return (
     <>
-      <Tabs defaultValue="improvements">
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="mb-4">
           <TabsTrigger value="improvements" className="gap-2">
             Improvements
@@ -237,7 +261,10 @@ export function PerformanceComparisonTable({
 
       <EvaluationModal
         entry={selectedEntry}
-        onClose={() => setSelectedEntry(null)}
+        entries={currentEntries}
+        currentIndex={selectedIndex ?? 0}
+        onNavigate={handleNavigate}
+        onClose={() => setSelectedIndex(null)}
       />
     </>
   );

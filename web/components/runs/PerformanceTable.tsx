@@ -17,6 +17,7 @@ type Evaluation = {
   evalId: string;
   exampleId: string;
   candidateIdx: number | null;
+  phase?: string;
   score: number;
   feedback: string | null;
   exampleInputs: Record<string, unknown> | null;
@@ -52,14 +53,19 @@ export function PerformanceTable({
   bestCandidateIdx,
   valsetExampleIds,
 }: PerformanceTableProps) {
-  const [selectedEntry, setSelectedEntry] = useState<ComparisonEntry | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"improvements" | "regressions" | "same">("improvements");
 
   const { improvements, regressions, same } = useMemo(() => {
-    // Filter to validation set only if valsetExampleIds is provided
+    // Only use valset evaluations (seed_validation and valset phases)
+    // Exclude minibatch_parent and minibatch_new which are exploratory evaluations
+    const valsetPhases = new Set(["seed_validation", "valset"]);
     const valsetSet = valsetExampleIds ? new Set(valsetExampleIds) : null;
-    const filteredEvaluations = valsetSet
-      ? evaluations.filter((ev) => valsetSet.has(ev.exampleId))
-      : evaluations;
+    const filteredEvaluations = evaluations.filter((ev) => {
+      const isValsetPhase = !ev.phase || valsetPhases.has(ev.phase);
+      const isValsetExample = !valsetSet || valsetSet.has(ev.exampleId);
+      return isValsetPhase && isValsetExample;
+    });
 
     // Group evaluations by example_id
     const byExample = new Map<string, Evaluation[]>();
@@ -154,6 +160,24 @@ export function PerformanceTable({
     return { improvements, regressions, same };
   }, [evaluations, seedCandidateIdx, bestCandidateIdx, valsetExampleIds]);
 
+  // Get the current entries based on active tab
+  const getCurrentEntries = () => {
+    switch (activeTab) {
+      case "improvements": return improvements;
+      case "regressions": return regressions;
+      case "same": return same;
+    }
+  };
+
+  const currentEntries = getCurrentEntries();
+  const selectedEntry = selectedIndex !== null ? currentEntries[selectedIndex] : null;
+
+  const handleNavigate = (index: number) => {
+    if (index >= 0 && index < currentEntries.length) {
+      setSelectedIndex(index);
+    }
+  };
+
   const renderTable = (entries: ComparisonEntry[], type: "improve" | "regress" | "same") => {
     if (entries.length === 0) {
       return (
@@ -186,7 +210,7 @@ export function PerformanceTable({
             <TableRow
               key={entry.exampleId}
               className="cursor-pointer hover:bg-accent"
-              onClick={() => setSelectedEntry(entry)}
+              onClick={() => setSelectedIndex(idx)}
             >
               <TableCell className="font-mono text-xs text-muted-foreground">
                 {idx + 1}
@@ -221,6 +245,11 @@ export function PerformanceTable({
     );
   };
 
+  const handleTabChange = (value: string) => {
+    setActiveTab(value as "improvements" | "regressions" | "same");
+    setSelectedIndex(null); // Reset selection when switching tabs
+  };
+
   return (
     <>
       <Card>
@@ -228,7 +257,7 @@ export function PerformanceTable({
           <CardTitle className="text-lg">Performance Comparison</CardTitle>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="improvements">
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="mb-4">
               <TabsTrigger value="improvements" className="gap-2">
                 Improvements
@@ -267,7 +296,10 @@ export function PerformanceTable({
 
       <EvaluationModal
         entry={selectedEntry}
-        onClose={() => setSelectedEntry(null)}
+        entries={currentEntries}
+        currentIndex={selectedIndex ?? 0}
+        onNavigate={handleNavigate}
+        onClose={() => setSelectedIndex(null)}
       />
     </>
   );

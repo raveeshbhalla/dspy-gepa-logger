@@ -168,6 +168,43 @@ class ServerClient:
 
         return None
 
+    def update_run(
+        self,
+        seed_prompt: dict[str, str] | None = None,
+        valset_example_ids: list[str] | None = None,
+    ) -> bool:
+        """Update run metadata (seed_prompt, valset, etc.).
+
+        This is used to update the run with information that wasn't available
+        when start_run was called (e.g., seed_prompt from first iteration).
+
+        Args:
+            seed_prompt: Optional seed prompt (candidate 0)
+            valset_example_ids: Optional list of validation set example IDs
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.run_id:
+            return False
+
+        data: dict[str, Any] = {}
+        if seed_prompt is not None:
+            data["seedPrompt"] = seed_prompt
+        if valset_example_ids is not None:
+            data["valsetExampleIds"] = valset_example_ids
+
+        if not data:
+            return True  # Nothing to update
+
+        result = self._request(
+            "PATCH",
+            f"/api/runs/{self.run_id}",
+            data,
+        )
+
+        return result is not None
+
     def push_iteration(
         self,
         iteration_number: int,
@@ -394,6 +431,36 @@ class ServerClient:
             "POST",
             f"/api/runs/{self.run_id}/logs",
             {"logs": logs},
+        )
+
+        return result is not None
+
+    def update_evaluation_feedback(
+        self,
+        feedback_updates: list[dict[str, Any]],
+    ) -> bool:
+        """Update feedback for existing evaluations.
+
+        This is used to add feedback from reflection events to evaluations
+        that were already pushed (since feedback is generated after evaluation).
+
+        Args:
+            feedback_updates: List of dicts with keys:
+                - exampleId: Example ID to match
+                - candidateIdx: Candidate index to match
+                - iteration: Iteration number to match
+                - feedback: New feedback string to set
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.run_id or not feedback_updates:
+            return False
+
+        result = self._request(
+            "PATCH",
+            f"/api/runs/{self.run_id}/evaluations/feedback",
+            {"updates": feedback_updates},
         )
 
         return result is not None

@@ -8,8 +8,10 @@ A web dashboard for tracking DSPy GEPA optimization runs with real-time updates,
 - **Real-time Updates**: Live stats and progress via Server-Sent Events (SSE)
 - **Run History**: Browse past optimization runs with full details
 - **Evaluation Comparison**: Interactive tables showing improvements, regressions, and unchanged examples
+- **Phase-based Filtering**: Distinguishes minibatch vs valset evaluations for accurate performance metrics
 - **Prompt Comparison**: Side-by-side view of original vs optimized prompts
 - **Lineage Tracking**: Visualize candidate ancestry
+- **Full Prediction Display**: Modal navigation with complete prediction output (no truncation)
 
 ## Tech Stack
 
@@ -51,7 +53,35 @@ Open http://localhost:3000 to view the dashboard.
 
 ## Usage
 
-Connect your Python optimization runs by adding `server_url` to `create_logged_gepa`:
+### With gepa_observable (Recommended)
+
+See `examples/eg_v2_simple.py` for a complete example using the observer pattern:
+
+```python
+from gepa_observable import optimize
+from dspy_gepa_logger.server.client import ServerClient
+from dspy_gepa_logger.core.lm_logger import DSPyLMLogger
+
+# Create ServerObserver (see examples/eg_v2_simple.py for full implementation)
+server_observer = ServerObserver("http://localhost:3000", project_name="My Project")
+server_observer.set_examples(train_data, val_data)
+server_observer.start_run(seed_candidate)
+
+# Optional: Capture LM calls
+lm_logger = DSPyLMLogger(on_call_complete=server_observer.on_lm_call)
+lm = dspy.LM("openai/gpt-4o-mini", callbacks=[lm_logger])
+
+# Run optimization with observers
+result = optimize(
+    seed_candidate=seed_candidate,
+    trainset=train_data,
+    valset=val_data,
+    adapter=adapter,
+    observers=[server_observer],
+)
+```
+
+### With Legacy API
 
 ```python
 from dspy_gepa_logger import create_logged_gepa, configure_dspy_logging

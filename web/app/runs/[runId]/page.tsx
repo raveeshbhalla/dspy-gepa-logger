@@ -39,6 +39,7 @@ type Run = {
     exampleId: string;
     candidateIdx: number | null;
     iteration: number | null;
+    phase: string;
     score: number;
     feedback: string | null;
     exampleInputs: Record<string, unknown> | null;
@@ -115,10 +116,15 @@ export default function RunPage() {
   const { avgSeedScore, avgBestScore, avgImprovement } = useMemo(() => {
     if (!run) return { avgSeedScore: null, avgBestScore: null, avgImprovement: null };
 
+    // Only use valset evaluations (seed_validation and valset phases)
+    // Exclude minibatch_parent and minibatch_new which are exploratory evaluations
+    const valsetPhases = new Set(["seed_validation", "valset"]);
     const valsetSet = run.valsetExampleIds ? new Set(run.valsetExampleIds) : null;
-    const filteredEvaluations = valsetSet
-      ? run.evaluations.filter((ev) => valsetSet.has(ev.exampleId))
-      : run.evaluations;
+    const filteredEvaluations = run.evaluations.filter((ev) => {
+      const isValsetPhase = valsetPhases.has(ev.phase);
+      const isValsetExample = !valsetSet || valsetSet.has(ev.exampleId);
+      return isValsetPhase && isValsetExample;
+    });
 
     // Group evaluations by example_id
     const byExample = new Map<string, typeof filteredEvaluations>();

@@ -38,6 +38,9 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
 ]
+mlflow = [
+    "mlflow>=2.0.0",
+]
 
 [project.scripts]
 gepa-report = "dspy_gepa_logger.export.html_report:main"
@@ -48,7 +51,7 @@ Repository = "https://github.com/raveeshbhalla/dspy-gepa-logger"
 Issues = "https://github.com/raveeshbhalla/dspy-gepa-logger/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dspy_gepa_logger"]
+packages = ["src/dspy_gepa_logger", "src/gepa_observable"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
