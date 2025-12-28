@@ -63,7 +63,7 @@ class AnyMathsAdapter(GEPAAdapter[AnyMathsDataInst, AnyMathsTrajectory, AnyMaths
         candidate: dict[str, str],
         capture_traces: bool = False,
     ) -> EvaluationBatch[AnyMathsTrajectory, AnyMathsRolloutOutput]:
-        import ast
+        import json
 
         outputs: list[AnyMathsRolloutOutput] = []
         scores: list[float] = []
@@ -105,16 +105,16 @@ class AnyMathsAdapter(GEPAAdapter[AnyMathsDataInst, AnyMathsTrajectory, AnyMaths
         for data, response in zip(batch, responses, strict=False):
             correct_output_format = True
             try:
-                assistant_response = ast.literal_eval(response.choices[0].message.content.strip())
+                assistant_response = json.loads(response.choices[0].message.content.strip())
             except Exception:
                 assistant_response = "Assistant failed to respond with the correct answer or format."
                 correct_output_format = False
 
             if correct_output_format:
-                structured_assistant_response = f"Assistant's Solution: {assistant_response['solution_pad']}\n"
-                structured_assistant_response += f"Final Answer: {assistant_response['final_answer']}"
+                structured_assistant_response = f"Assistant's Solution: {assistant_response.get('solution_pad', '')}\n"
+                structured_assistant_response += f"Final Answer: {assistant_response.get('final_answer', '')}"
                 output = {"full_assistant_response": structured_assistant_response}
-                score = 1.0 if data["answer"] in assistant_response["final_answer"] else self.failure_score
+                score = 1.0 if data["answer"] in assistant_response.get("final_answer", "") else self.failure_score
             else:
                 output = {"full_assistant_response": assistant_response}
                 score = self.failure_score

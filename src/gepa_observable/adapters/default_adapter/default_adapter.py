@@ -48,7 +48,7 @@ class DefaultAdapter(GEPAAdapter[DefaultDataInst, DefaultTrajectory, DefaultRoll
         model: str | ChatCompletionCallable,
         failure_score: float = 0.0,
         max_litellm_workers: int = 10,
-        litellm_batch_completion_kwargs: dict[str, Any] = {},
+        litellm_batch_completion_kwargs: dict[str, Any] | None = None,
     ):
         if isinstance(model, str):
             import litellm
@@ -58,7 +58,7 @@ class DefaultAdapter(GEPAAdapter[DefaultDataInst, DefaultTrajectory, DefaultRoll
 
         self.failure_score = failure_score
         self.max_litellm_workers = max_litellm_workers
-        self.litellm_batch_completion_kwargs = litellm_batch_completion_kwargs
+        self.litellm_batch_completion_kwargs = litellm_batch_completion_kwargs or {}
 
     def evaluate(
         self,
@@ -70,6 +70,8 @@ class DefaultAdapter(GEPAAdapter[DefaultDataInst, DefaultTrajectory, DefaultRoll
         scores: list[float] = []
         trajectories: list[DefaultTrajectory] | None = [] if capture_traces else None
 
+        if not candidate:
+            raise ValueError("candidate must contain at least one value")
         system_content = next(iter(candidate.values()))
 
         litellm_requests = []
@@ -99,7 +101,7 @@ class DefaultAdapter(GEPAAdapter[DefaultDataInst, DefaultTrajectory, DefaultRoll
 
         for data, assistant_response in zip(batch, responses, strict=False):
             output: DefaultRolloutOutput = {"full_assistant_response": assistant_response}
-            score = 1.0 if data["answer"] in assistant_response else 0.0
+            score = 1.0 if data["answer"] in (assistant_response or "") else 0.0
 
             outputs.append(output)
             scores.append(score)

@@ -443,7 +443,7 @@ class GenericRAGAdapter(GEPAAdapter[RAGDataInst, RAGTrajectory, RAGOutput]):
                 "Feedback": self._generate_reranking_feedback(trajectory, score),
             }
 
-            return None
+        return None
 
     def _generate_query_reformulation_feedback(self, trajectory: RAGTrajectory, score: float) -> str:
         """Generate feedback for query reformulation component."""

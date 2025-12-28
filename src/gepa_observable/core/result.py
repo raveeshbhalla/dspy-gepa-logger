@@ -76,6 +76,8 @@ class GEPAResult(Generic[RolloutOutput, DataId]):
     @property
     def best_idx(self) -> int:
         scores = self.val_aggregate_scores
+        if not scores:
+            raise ValueError("`val_aggregate_scores` is empty; no best candidate")
         return max(range(len(scores)), key=lambda i: scores[i])
 
     @property

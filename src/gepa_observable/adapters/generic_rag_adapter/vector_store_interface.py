@@ -1,6 +1,7 @@
 # Copyright (c) 2025 Lakshya A Agrawal and the GEPA contributors
 # https://github.com/gepa-ai/gepa
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -152,7 +153,13 @@ class VectorStoreInterface(ABC):
                 # More semantic-focused
                 results = vector_store.hybrid_search("AI algorithms", alpha=0.8)
         """
-        # Default fallback implementation
+        # Default fallback implementation with warning
+        if not self.supports_hybrid_search():
+            warnings.warn(
+                f"{self.__class__.__name__} does not support hybrid search. "
+                "Falling back to similarity_search().",
+                stacklevel=2,
+            )
         return self.similarity_search(query, k, filters)
 
     @abstractmethod

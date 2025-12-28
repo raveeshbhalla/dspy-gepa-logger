@@ -334,19 +334,19 @@ class LanceDBVectorStore(VectorStoreInterface):
                 # String exact match - properly escape quotes and backslashes
                 escaped_value = value.replace("\\", "\\\\").replace("'", "''")
                 expressions.append(f"{key} = '{escaped_value}'")
+            elif isinstance(value, bool):
+                # Boolean match - must check before int since bool is subclass of int
+                expressions.append(f"{key} = {str(value).lower()}")
             elif isinstance(value, int | float):
                 # Numeric exact match
-                expressions.append(f"{key} = {value}")
-            elif isinstance(value, bool):
-                # Boolean match
                 expressions.append(f"{key} = {value}")
             elif isinstance(value, list):
                 # IN clause for multiple values
                 if all(isinstance(v, str) for v in value):
-                    # String values - properly escape
+                    # String values - properly escape backslashes and quotes
                     escaped_values = []
                     for v in value:
-                        escaped_v = v.replace("'", "''")
+                        escaped_v = v.replace("\\", "\\\\").replace("'", "''")
                         escaped_values.append(f"'{escaped_v}'")
                     values_str = ", ".join(escaped_values)
                     expressions.append(f"{key} IN ({values_str})")
@@ -355,16 +355,14 @@ class LanceDBVectorStore(VectorStoreInterface):
                     values_str = ", ".join(str(v) for v in value)
                     expressions.append(f"{key} IN ({values_str})")
             elif isinstance(value, dict):
-                # Range queries
+                # Range queries - validate numeric values
                 range_conditions = []
-                if "gte" in value:
-                    range_conditions.append(f"{key} >= {value['gte']}")
-                if "gt" in value:
-                    range_conditions.append(f"{key} > {value['gt']}")
-                if "lte" in value:
-                    range_conditions.append(f"{key} <= {value['lte']}")
-                if "lt" in value:
-                    range_conditions.append(f"{key} < {value['lt']}")
+                for op, op_symbol in [("gte", ">="), ("gt", ">"), ("lte", "<="), ("lt", "<")]:
+                    if op in value:
+                        range_val = value[op]
+                        if not isinstance(range_val, (int, float)):
+                            raise ValueError(f"Range filter '{op}' requires numeric value, got {type(range_val).__name__}")
+                        range_conditions.append(f"{key} {op_symbol} {range_val}")
 
                 if range_conditions:
                     expressions.append("(" + " AND ".join(range_conditions) + ")")

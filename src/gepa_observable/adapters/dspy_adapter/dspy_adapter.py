@@ -161,6 +161,9 @@ class DspyAdapter(GEPAAdapter[Example, TraceData, Prediction]):
                     break
             assert module is not None
 
+            if pred_name not in self.feedback_map:
+                continue
+
             items: list[dict[str, Any]] = []
             for data in eval_batch.trajectories or []:
                 trace = data["trace"]

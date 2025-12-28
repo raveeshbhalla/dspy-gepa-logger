@@ -322,7 +322,8 @@ class GEPAEngine(Generic[DataId, DataInst, Trajectory, RolloutOutput]):
 
                             if proposal is not None and proposal.tag == "merge":
                                 parent_sums = proposal.subsample_scores_before or [float("-inf"), float("-inf")]
-                                new_sum = sum(proposal.subsample_scores_after or [])
+                                new_after = proposal.subsample_scores_after
+                                new_sum = sum(new_after) if new_after else float("-inf")
                                 accepted = new_sum >= max(parent_sums)
 
                                 # Notify observers of merge attempt

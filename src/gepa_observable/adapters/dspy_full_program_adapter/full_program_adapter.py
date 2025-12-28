@@ -103,12 +103,12 @@ class DspyAdapter(GEPAAdapter[Example, TraceData, Prediction]):
             outputs = []
             for t in trajs:
                 outputs.append(t["prediction"])
-                if hasattr(t["prediction"], "__class__") and t.get("score") is None:
+                if t.get("score") is None:
                     scores.append(self.failure_score)
                 else:
                     score = t["score"]
                     if hasattr(score, "score"):
-                        score = score["score"]
+                        score = score.score
                     scores.append(score)
             return EvaluationBatch(outputs=outputs, scores=scores, trajectories=trajs)
         else:
