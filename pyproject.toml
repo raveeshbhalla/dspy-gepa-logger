@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dspy-gepa-logger"
-version = "0.1.0"
+version = "0.1.1-alpha3"
 description = "Comprehensive logging and visualization infrastructure for DSPy GEPA optimization runs"
 readme = "README.md"
 license = "MIT"
