@@ -47,6 +47,7 @@ type Evaluation = {
   exampleId: string;
   candidateIdx: number | null;
   iteration?: number | null;
+  phase?: string | null;
   score: number;
   feedback: string | null;
   exampleInputs: Record<string, unknown> | null;
@@ -87,19 +88,33 @@ export function IterationsTab({
    * Split iteration evaluations into parent vs proposed sets.
    * Within each iteration, GEPA evaluates parent first, then proposed.
    *
-   * NOTE on GEPA evaluation tagging:
-   * - Proposed evaluations (after reflection) have iteration = iterNum - 1
-   * - Parent evaluations have iteration = NULL (always!)
+   * NOTE on GEPA evaluation tagging (gepa-observable):
+   * - Both parent and proposed evals have the same iteration number
+   * - They are distinguished by phase: "minibatch_parent" vs "minibatch_new"
    *
-   * We match parent evals by:
-   * 1. Finding proposed evals by iteration = iterNum - 1
-   * 2. Getting the exampleIds and min timestamp from proposed evals
-   * 3. Finding parent evals from NULL iteration with same exampleIds and earlier timestamp
+   * Fallback for legacy behavior (dspy_gepa_logger):
+   * - Proposed evaluations have iteration = iterNum - 1
+   * - Parent evaluations have iteration = NULL
    */
   function getIterationComparison(iterNum: number): {
     parentEvals: FullEvaluation[];
     proposedEvals: FullEvaluation[];
   } {
+    // Strategy 1: Try phase-based matching (gepa-observable)
+    // Parent evals have phase="minibatch_parent", proposed have phase="minibatch_new"
+    const parentByPhase = evaluations.filter(
+      (ev) => ev.iteration === iterNum && ev.phase === "minibatch_parent"
+    ) as FullEvaluation[];
+
+    const proposedByPhase = evaluations.filter(
+      (ev) => ev.iteration === iterNum && ev.phase === "minibatch_new"
+    ) as FullEvaluation[];
+
+    if (parentByPhase.length > 0 || proposedByPhase.length > 0) {
+      return { parentEvals: parentByPhase, proposedEvals: proposedByPhase };
+    }
+
+    // Strategy 2: Fallback to legacy iteration-based matching
     // Proposed evaluations have iteration = iterNum - 1
     const targetIteration = iterNum - 1;
     const proposedEvals = evaluations.filter(
@@ -148,16 +163,27 @@ export function IterationsTab({
   }
 
   /**
-   * Check if a candidate became part of the pareto frontier in any iteration.
-   * Returns true if candidate is in any iteration's paretoPrograms.
+   * Check if a candidate became part of the pareto frontier.
+   * Checks the LATEST iteration's paretoPrograms (final state) since that
+   * represents which candidates ended up on the frontier.
+   * Also checks all iterations in case the format varies.
    */
   function isCandidateInPareto(candidateIdx: number): boolean {
     const iters = allIterations || iterations;
-    for (const iter of iters) {
+
+    // Check all iterations (latest first for efficiency)
+    const sortedIters = [...iters].sort((a, b) => b.iterationNumber - a.iterationNumber);
+
+    for (const iter of sortedIters) {
       if (iter.paretoPrograms) {
         const paretoIndices = Object.values(iter.paretoPrograms);
-        if (paretoIndices.includes(candidateIdx)) {
-          return true;
+        // paretoPrograms can be number or array of numbers depending on backend
+        for (const val of paretoIndices) {
+          if (Array.isArray(val)) {
+            if (val.includes(candidateIdx)) return true;
+          } else if (val === candidateIdx) {
+            return true;
+          }
         }
       }
     }
@@ -166,10 +192,62 @@ export function IterationsTab({
 
   /**
    * Check if any candidate created in this iteration became a pareto candidate.
+   * Uses multiple strategies to determine success.
    */
   function didIterationProduceSuccessfulCandidate(iterNum: number): boolean {
+    const iter = iterations.find((i) => i.iterationNumber === iterNum);
+    if (!iter) return false;
+
+    // Method 1: Check candidates created at this iteration (from candidates table)
     const createdCandidates = getCandidatesCreatedAt(iterNum);
-    return createdCandidates.some((c) => isCandidateInPareto(c.candidateIdx));
+    if (createdCandidates.some((c) => isCandidateInPareto(c.candidateIdx))) {
+      return true;
+    }
+
+    // Method 2: Check childCandidateIdxs from iteration data
+    if (iter.childCandidateIdxs) {
+      try {
+        const childIdxs = JSON.parse(iter.childCandidateIdxs) as number[];
+        if (childIdxs.some((idx) => isCandidateInPareto(idx))) {
+          return true;
+        }
+      } catch {
+        // Invalid JSON, ignore
+      }
+    }
+
+    // Method 3: Check if pareto size increased from previous iteration
+    // This indicates a successful candidate was added
+    const prevIter = iterations.find((i) => i.iterationNumber === iterNum - 1);
+    const prevParetoSize = prevIter?.paretoSize ?? 1; // Default to 1 (seed)
+    if (iter.paretoSize > prevParetoSize) {
+      return true;
+    }
+
+    // Method 4: Check if this iteration's paretoPrograms contains any non-seed candidates
+    // that were created at this iteration or have this iteration as their createdAtIter
+    if (iter.paretoPrograms) {
+      const paretoIndices = Object.values(iter.paretoPrograms);
+      const allParetoIdxs = new Set<number>();
+      for (const val of paretoIndices) {
+        if (Array.isArray(val)) {
+          val.forEach((idx) => allParetoIdxs.add(idx));
+        } else if (typeof val === 'number') {
+          allParetoIdxs.add(val);
+        }
+      }
+
+      // Check if any pareto candidate (other than seed) was created at this iteration
+      for (const idx of allParetoIdxs) {
+        if (idx === 0) continue; // Skip seed
+        const candidate = candidates.find((c) => c.candidateIdx === idx);
+        if (candidate?.createdAtIter === iterNum) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   function formatTimestamp(timestamp: number): string {
@@ -275,7 +353,10 @@ export function IterationsTab({
     );
   }
 
-  if (iterations.length === 0) {
+  // Filter out iteration 0 (seed validation) - we only show actual optimization iterations
+  const displayIterations = iterations.filter((iter) => iter.iterationNumber !== 0);
+
+  if (displayIterations.length === 0) {
     return (
       <Card>
         <CardContent className="py-12 text-center text-muted-foreground">
@@ -290,7 +371,7 @@ export function IterationsTab({
 
   return (
     <div className="space-y-4">
-      {iterations.map((iter) => {
+      {displayIterations.map((iter) => {
         const isExpanded = expandedIteration === iter.iterationNumber;
         const reflectionCalls = getReflectionCalls(iter.iterationNumber);
         const { parentEvals, proposedEvals } = getIterationComparison(iter.iterationNumber);
@@ -326,7 +407,7 @@ export function IterationsTab({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <CardTitle className="text-lg">
-                    Iteration {iter.iterationNumber + 1}{" "}
+                    Iteration {iter.iterationNumber}{" "}
                     <span title={iterationSuccessful ? "Produced a pareto candidate" : "Did not produce a pareto candidate"}>
                       {iterationSuccessful ? "✅" : "❌"}
                     </span>
@@ -356,7 +437,7 @@ export function IterationsTab({
                   <TabsList>
                     <TabsTrigger value="prompts">Prompt Changes</TabsTrigger>
                     <TabsTrigger value="reflection">
-                      Reflection ({reflectionCalls.length})
+                      Reflection ({(iter.reflectionInput || iter.reflectionOutput) ? 1 : reflectionCalls.length})
                     </TabsTrigger>
                     <TabsTrigger value="evals">
                       Performance Comparison ({Math.min(parentEvals.length, proposedEvals.length)})
@@ -397,7 +478,25 @@ export function IterationsTab({
                       // First try proposedChanges field
                       if (iter.proposedChanges) {
                         try {
-                          proposals = JSON.parse(iter.proposedChanges);
+                          const parsed = JSON.parse(iter.proposedChanges);
+                          // Handle gepa-observable format: [{"component": "name", "newText": "..."}]
+                          // Convert to instruction format: {"name": "..."}
+                          if (Array.isArray(parsed)) {
+                            const converted: Record<string, string> = {};
+                            for (const item of parsed) {
+                              if (item.component && item.newText) {
+                                converted[item.component] = item.newText;
+                              } else if (typeof item === 'object') {
+                                // Already in {name: text} format
+                                Object.assign(converted, item);
+                              }
+                            }
+                            if (Object.keys(converted).length > 0) {
+                              proposals.push(converted);
+                            }
+                          } else if (typeof parsed === 'object') {
+                            proposals.push(parsed);
+                          }
                         } catch {
                           // Invalid JSON, will fall through to reflection output
                         }
@@ -496,17 +595,73 @@ export function IterationsTab({
                   </TabsContent>
 
                   <TabsContent value="reflection" className="mt-4 space-y-4">
-                    {reflectionCalls.length > 0 ? (
-                      reflectionCalls.map((call) => (
-                        <div key={call.callId}>
-                          {renderLmCallDetails(call)}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-muted-foreground text-center py-8">
-                        No reflection LM calls recorded for this iteration.
-                      </p>
-                    )}
+                    {(() => {
+                      // Try to get reflection data from iteration fields first (gepa-observable)
+                      const hasIterationReflection = iter.reflectionInput || iter.reflectionOutput;
+
+                      if (hasIterationReflection) {
+                        let reflectionInputStr = "";
+                        let reflectionOutputStr = "";
+
+                        try {
+                          if (iter.reflectionInput) {
+                            const parsed = JSON.parse(iter.reflectionInput);
+                            reflectionInputStr = JSON.stringify(parsed, null, 2);
+                          }
+                        } catch {
+                          reflectionInputStr = iter.reflectionInput || "";
+                        }
+
+                        try {
+                          if (iter.reflectionOutput) {
+                            const parsed = JSON.parse(iter.reflectionOutput);
+                            reflectionOutputStr = JSON.stringify(parsed, null, 2);
+                          }
+                        } catch {
+                          reflectionOutputStr = iter.reflectionOutput || "";
+                        }
+
+                        return (
+                          <div className="space-y-4">
+                            {reflectionInputStr && (
+                              <div className="border rounded-lg p-4 bg-muted/30">
+                                <h4 className="font-medium text-sm mb-2 text-muted-foreground">
+                                  Reflection Input (Dataset)
+                                </h4>
+                                <pre className="p-3 bg-muted rounded text-xs overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                                  {reflectionInputStr}
+                                </pre>
+                              </div>
+                            )}
+                            {reflectionOutputStr && (
+                              <div className="border rounded-lg p-4 bg-muted/30">
+                                <h4 className="font-medium text-sm mb-2 text-muted-foreground">
+                                  Proposed Instructions
+                                </h4>
+                                <pre className="p-3 bg-muted rounded text-xs overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                                  {reflectionOutputStr}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // Fallback to LM calls (legacy dspy_gepa_logger)
+                      if (reflectionCalls.length > 0) {
+                        return reflectionCalls.map((call) => (
+                          <div key={call.callId}>
+                            {renderLmCallDetails(call)}
+                          </div>
+                        ));
+                      }
+
+                      return (
+                        <p className="text-muted-foreground text-center py-8">
+                          No reflection data recorded for this iteration.
+                        </p>
+                      );
+                    })()}
                   </TabsContent>
 
                   <TabsContent value="evals" className="mt-4">

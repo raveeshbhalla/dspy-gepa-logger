@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from dspy.utils.callback import BaseCallback
+
 from .context import get_ctx
 
 
@@ -45,8 +47,10 @@ class LMCall:
     component_name: str | None = None  # Which DSPy component made the call
 
 
-class DSPyLMLogger:
+class DSPyLMLogger(BaseCallback):
     """DSPy callback that captures all LM calls WITH context tags.
+
+    Inherits from BaseCallback to be properly recognized by DSPy's callback system.
 
     Instead of correlating by timestamp (fragile with threads),
     we read the current context set by the state logger / metric wrapper.
@@ -76,6 +80,7 @@ class DSPyLMLogger:
             on_call_complete: Optional callback called when each LM call completes.
                              Used for real-time streaming to server.
         """
+        super().__init__()  # Initialize BaseCallback
         self.calls: list[LMCall] = []
         self._pending: dict[str, LMCall] = {}
         self._start_time: float | None = None
@@ -185,41 +190,6 @@ class DSPyLMLogger:
                 self._on_call_complete(call)
             except Exception:
                 pass  # Don't let callback errors affect normal operation
-
-    # Stub methods for DSPy 2.5+ callback interface
-    # These are called by DSPy but we don't need to handle them
-
-    def on_module_start(self, *args: Any, **kwargs: Any) -> None:
-        """Called when a DSPy module starts execution."""
-        pass
-
-    def on_module_end(self, *args: Any, **kwargs: Any) -> None:
-        """Called when a DSPy module finishes execution."""
-        pass
-
-    def on_evaluate_start(self, *args: Any, **kwargs: Any) -> None:
-        """Called when evaluation starts."""
-        pass
-
-    def on_evaluate_end(self, *args: Any, **kwargs: Any) -> None:
-        """Called when evaluation ends."""
-        pass
-
-    def on_adapter_format_start(self, *args: Any, **kwargs: Any) -> None:
-        """Called when adapter formatting starts."""
-        pass
-
-    def on_adapter_format_end(self, *args: Any, **kwargs: Any) -> None:
-        """Called when adapter formatting ends."""
-        pass
-
-    def on_adapter_parse_start(self, *args: Any, **kwargs: Any) -> None:
-        """Called when adapter parsing starts."""
-        pass
-
-    def on_adapter_parse_end(self, *args: Any, **kwargs: Any) -> None:
-        """Called when adapter parsing ends."""
-        pass
 
     # Query methods
 
@@ -337,3 +307,7 @@ class DSPyLMLogger:
     def __len__(self) -> int:
         """Return number of completed LM calls."""
         return len(self.calls)
+
+    def __bool__(self) -> bool:
+        """Return True since logger is always valid, regardless of call count."""
+        return True

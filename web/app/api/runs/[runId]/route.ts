@@ -84,6 +84,69 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 }
 
+// PATCH /api/runs/[runId] - Update run metadata (seed_prompt, valset, etc.)
+export async function PATCH(request: NextRequest, context: RouteContext) {
+  try {
+    const { runId } = await context.params;
+    const body = await request.json();
+    const { seedPrompt, valsetExampleIds } = body;
+
+    const updateData: Record<string, unknown> = {};
+
+    if (seedPrompt !== undefined) {
+      updateData.seedPrompt = seedPrompt ? JSON.stringify(seedPrompt) : null;
+    }
+
+    if (valsetExampleIds !== undefined) {
+      updateData.valsetExampleIds = valsetExampleIds
+        ? JSON.stringify(valsetExampleIds)
+        : null;
+    }
+
+    const run = await prisma.run.update({
+      where: { id: runId },
+      data: updateData,
+    });
+
+    // If we have a seed prompt and no candidate 0 yet, create it
+    if (seedPrompt) {
+      const existingCandidate = await prisma.candidate.findUnique({
+        where: {
+          runId_candidateIdx: {
+            runId,
+            candidateIdx: 0,
+          },
+        },
+      });
+
+      if (!existingCandidate) {
+        await prisma.candidate.create({
+          data: {
+            runId: run.id,
+            candidateIdx: 0,
+            content: JSON.stringify(seedPrompt),
+            parentIdx: null,
+            createdAtIter: 0,
+          },
+        });
+
+        await prisma.run.update({
+          where: { id: run.id },
+          data: { totalCandidates: { increment: 1 } },
+        });
+      }
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Error updating run:", error);
+    return NextResponse.json(
+      { error: "Failed to update run" },
+      { status: 500 }
+    );
+  }
+}
+
 // DELETE /api/runs/[runId] - Delete a run
 export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
