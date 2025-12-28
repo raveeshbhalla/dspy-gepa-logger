@@ -5,7 +5,6 @@
 # They are provided by a third-party and are governed by
 # separate terms of service, privacy policy, and support
 # documentation.
-
 name: Upload Python Package
 
 on:
@@ -13,7 +12,7 @@ on:
     types: [published]
 
 permissions:
-  contents: read
+  contents: read id-token: write
 
 jobs:
   release-build:
@@ -26,6 +25,9 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Clean previous build artifacts
+        run: rm -rf dist build *.egg-info || true
+    
       - name: Build release distributions
         run: |
           # NOTE: put your own distribution build steps here.
@@ -55,7 +57,7 @@ jobs:
       #
       # ALTERNATIVE: if your GitHub Release name is the PyPI project version string
       # ALTERNATIVE: exactly, uncomment the following line instead:
-      # url: https://pypi.org/project/YOURPROJECT/${{ github.event.release.name }}
+      url: https://pypi.org/project/YOURPROJECT/${{ github.event.release.name }}
 
     steps:
       - name: Retrieve release distributions
