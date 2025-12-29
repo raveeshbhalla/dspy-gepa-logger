@@ -96,9 +96,11 @@ def serialize_output(output: Any) -> str | None:
                 default=str,
             )
         elif hasattr(output, "toDict") and callable(output.toDict):
-            return json.dumps(output.toDict(), default=str)
+            raw_dict = output.toDict()
+            serialized = {k: serialize_value(v) for k, v in raw_dict.items()}
+            return json.dumps(serialized, default=str)
         else:
-            return json.dumps(output, default=str)
+            return json.dumps(serialize_value(output), default=str)
     except (TypeError, ValueError):
         return str(output)
 
