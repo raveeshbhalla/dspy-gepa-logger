@@ -43,6 +43,13 @@ from dspy_gepa_logger.core.logged_proposer import (
 # Context utilities
 from dspy_gepa_logger.core.context import set_ctx, get_ctx, clear_ctx, with_ctx
 
+# Serialization utilities
+from dspy_gepa_logger.core.serialization import (
+    serialize_value,
+    serialize_output,
+    serialize_example_inputs,
+)
+
 # Server integration (optional)
 from dspy_gepa_logger.server.client import ServerClient
 
@@ -77,6 +84,10 @@ __all__ = [
     "get_ctx",
     "clear_ctx",
     "with_ctx",
+    # Serialization
+    "serialize_value",
+    "serialize_output",
+    "serialize_example_inputs",
     # Server
     "ServerClient",
 ]

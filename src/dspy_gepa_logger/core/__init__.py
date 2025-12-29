@@ -23,6 +23,13 @@ from dspy_gepa_logger.core.logged_proposer import (
 # Unified tracker
 from dspy_gepa_logger.core.tracker_v2 import GEPATracker, CandidateDiff
 
+# Serialization utilities
+from dspy_gepa_logger.core.serialization import (
+    serialize_value,
+    serialize_output,
+    serialize_example_inputs,
+)
+
 
 __all__ = [
     # Context
@@ -48,4 +55,8 @@ __all__ = [
     # Tracker
     "GEPATracker",
     "CandidateDiff",
+    # Serialization
+    "serialize_value",
+    "serialize_output",
+    "serialize_example_inputs",
 ]

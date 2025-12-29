@@ -26,7 +26,7 @@ classifiers = [
 
 dependencies = [
     "dspy>=2.5.0",
-    "gepa>=0.0.17",
+    "gepa>=0.0.22",
     "pandas>=2.0.0",
     "requests>=2.28.0",
 ]
@@ -50,8 +50,14 @@ Homepage = "https://github.com/raveeshbhalla/dspy-gepa-logger"
 Repository = "https://github.com/raveeshbhalla/dspy-gepa-logger"
 Issues = "https://github.com/raveeshbhalla/dspy-gepa-logger/issues"
 
+[tool.hatch.build.targets.sdist]
+include = ["src/dspy_gepa_logger", "src/gepa_observable"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/dspy_gepa_logger", "src/gepa_observable"]
+
+[tool.hatch.build]
+sources = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
