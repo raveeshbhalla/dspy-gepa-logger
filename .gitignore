@@ -71,6 +71,9 @@ venv.bak/
 # Project specific
 *.db
 *.sqlite
+
+# Generated version file (created by hatch-vcs during build)
+src/dspy_gepa_logger/_version.py
 *.log
 test_logs/
 /logs/

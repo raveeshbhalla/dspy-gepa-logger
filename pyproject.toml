@@ -51,12 +51,10 @@ Repository = "https://github.com/raveeshbhalla/dspy-gepa-logger"
 Issues = "https://github.com/raveeshbhalla/dspy-gepa-logger/issues"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/dspy_gepa_logger", "src/gepa_observable"]
+include = ["src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dspy_gepa_logger", "src/gepa_observable"]
-
-[tool.hatch.build]
 sources = ["src"]
 
 [tool.pytest.ini_options]
