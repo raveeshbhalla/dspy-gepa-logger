@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "dspy-gepa-logger"
-version = "0.1.1-alpha3"
+dynamic = ["version"]
 description = "Comprehensive logging and visualization infrastructure for DSPy GEPA optimization runs"
 readme = "README.md"
 license = "MIT"
@@ -70,3 +70,9 @@ target-version = ["py310", "py311", "py312"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/dspy_gepa_logger/_version.py"

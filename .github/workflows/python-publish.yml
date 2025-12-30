@@ -23,6 +23,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for hatch-vcs to determine version from tags
 
       - uses: actions/setup-python@v5
         with:
