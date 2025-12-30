@@ -53,7 +53,10 @@ from dspy_gepa_logger.core.serialization import (
 # Server integration (optional)
 from dspy_gepa_logger.server.client import ServerClient
 
-__version__ = "0.3.0"
+try:
+    from dspy_gepa_logger._version import __version__
+except ImportError:
+    __version__ = "0.0.0.dev0"  # Fallback for editable installs without build
 
 __all__ = [
     # API functions
