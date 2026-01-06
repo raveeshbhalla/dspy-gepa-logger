@@ -403,8 +403,36 @@ class GEPA(Teleprompter):
             # Each full eval = len(valset) metric calls
             effective_max_metric_calls = self.max_full_evals * len(valset)
 
-        # Create feedback map for predictors
-        feedback_map = {name: self.metric for name, _ in predictors}
+        # Create feedback map for predictors using feedback_fn_creator pattern
+        # This wraps the user's metric to translate PredictorFeedbackFn signature
+        # to the standard GEPA metric signature (gold, pred, trace, pred_name, pred_trace)
+        def feedback_fn_creator(pred_name: str, predictor) -> Callable:
+            """Create a feedback function that wraps the user's metric."""
+            def feedback_fn(predictor_output, predictor_inputs, module_inputs,
+                            module_outputs, captured_trace):
+                # Build pred_trace for this specific predictor
+                # Shape: [(predictor, predictor_inputs, predictor_output)]
+                pred_trace = [(predictor, predictor_inputs, predictor_output)]
+
+                # Call metric with standard GEPA signature
+                result = self.metric(
+                    module_inputs,      # gold (Example)
+                    module_outputs,     # pred (Prediction)
+                    captured_trace,     # trace (full execution trace)
+                    pred_name,          # pred_name (predictor name)
+                    pred_trace,         # pred_trace (predictor-specific trace)
+                )
+
+                # Normalize to ScoreWithFeedback format (dict with score and feedback)
+                if hasattr(result, 'score'):
+                    return {'score': result.score, 'feedback': getattr(result, 'feedback', '')}
+                else:
+                    # Metric returned just a float score
+                    return {'score': result, 'feedback': ''}
+
+            return feedback_fn
+
+        feedback_map = {name: feedback_fn_creator(name, pred) for name, pred in predictors}
 
         # Create RNG with seed
         rng = random.Random(self.seed)

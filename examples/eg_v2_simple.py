@@ -50,40 +50,16 @@ class Prompt(dspy.Signature):
 program = dspy.ChainOfThought(Prompt)
 
 
-def metric_with_feedback(
-    gold=None, pred=None, trace=None, pred_name=None, pred_trace=None,
-    # DSPy's DspyAdapter feedback_map calls with these keyword args:
-    predictor_output=None, predictor_inputs=None, module_inputs=None, module_outputs=None, captured_trace=None,
-    module_score=None,  # Passed during reflection - must return this exact score
-    **kwargs
-):
+def metric_with_feedback(gold, pred, trace=None, pred_name=None, pred_trace=None):
     """Metric that returns score and feedback.
 
-    This metric supports two calling conventions:
-    1. GEPA standard: (gold, pred, trace, pred_name, pred_trace)
-    2. DSPy feedback: (predictor_output, predictor_inputs, module_inputs, module_outputs, captured_trace, module_score)
-
+    Uses the standard GEPA signature: (gold, pred, trace, pred_name, pred_trace)
     Returns a dspy.Prediction with 'score' and 'feedback' fields.
 
-    Note: During reflection, GEPA passes module_score which must be returned exactly.
-    This handles the case of non-deterministic metrics (like semantic similarity).
+    The feedback string guides GEPA's reflection on how to improve the instruction.
     """
-    # Handle DSPy's feedback function signature (module_inputs=gold, module_outputs=pred)
-    if module_inputs is not None:
-        gold = module_inputs
-    if module_outputs is not None:
-        pred = module_outputs
-
-    # Determine if correct
     is_correct = pred.answer.lower() == gold.answer.lower()
-
-    # During reflection, GEPA passes module_score - we MUST return it exactly
-    if module_score is not None:
-        score = module_score
-    else:
-        # Use deterministic score for first evaluation, random for variation
-        score = 1.0 if is_correct else 0.0
-
+    score = 1.0 if is_correct else 0.0
     feedback = "Great work!" if is_correct else f"Nice try - expected '{gold.answer}'"
     return dspy.Prediction(score=score, feedback=feedback)
 
