@@ -409,7 +409,19 @@ class GEPA(Teleprompter):
         # Create RNG with seed
         rng = random.Random(self.seed)
 
-        # Create the DspyAdapter
+        # Resolve reflection_lm - handle string model names by converting to dspy.LM
+        # This must happen before creating the adapter so it gets the resolved LM
+        resolved_reflection_lm: dspy.LM | None = None
+        if isinstance(self.reflection_lm, str):
+            # Convert string model name to dspy.LM instance
+            resolved_reflection_lm = dspy.LM(self.reflection_lm)
+        elif isinstance(self.reflection_lm, dspy.LM):
+            resolved_reflection_lm = self.reflection_lm
+        elif self.reflection_lm is None and getattr(dspy.settings, "lm", None) is not None:
+            # Use configured LM as fallback
+            resolved_reflection_lm = dspy.settings.lm
+
+        # Create the DspyAdapter with the resolved LM
         adapter = DspyAdapter(
             student_module=student,
             metric_fn=self.metric,
@@ -418,7 +430,7 @@ class GEPA(Teleprompter):
             num_threads=self.num_threads,
             add_format_failure_as_feedback=self.add_format_failure_as_feedback,
             rng=rng,
-            reflection_lm=self.reflection_lm if isinstance(self.reflection_lm, dspy.LM) else None,
+            reflection_lm=resolved_reflection_lm,
             custom_instruction_proposer=None,  # Could add instruction_proposer param later
             warn_on_score_mismatch=self.warn_on_score_mismatch,
             enable_tool_optimization=self.enable_tool_optimization,
@@ -427,17 +439,6 @@ class GEPA(Teleprompter):
 
         # Build seed candidate from predictor instructions
         seed_candidate = self._build_seed_candidate(student)
-
-        # Prepare reflection_lm - handle string model names
-        reflection_lm = self.reflection_lm
-        if isinstance(reflection_lm, str):
-            # Will be converted to a callable in optimize()
-            pass
-        elif isinstance(reflection_lm, dspy.LM):
-            reflection_lm = reflection_lm
-        elif reflection_lm is None and hasattr(dspy.settings, "lm"):
-            # Use configured LM as fallback
-            reflection_lm = dspy.settings.lm
 
         # Merge gepa_kwargs with explicit params
         # Explicit params take precedence
@@ -450,7 +451,7 @@ class GEPA(Teleprompter):
             valset=valset,
             adapter=adapter,
             task_lm=None,  # Adapter handles this
-            reflection_lm=reflection_lm,
+            reflection_lm=resolved_reflection_lm,
             candidate_selection_strategy=self.candidate_selection_strategy,
             skip_perfect_score=self.skip_perfect_score,
             reflection_minibatch_size=self.reflection_minibatch_size,
