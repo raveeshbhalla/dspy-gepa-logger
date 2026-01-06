@@ -622,8 +622,12 @@ class ServerObserver:
         # Use 1-indexed iteration numbers for the UI
         ui_iteration = self.current_iteration + 1
 
-        # Build pareto_programs dict
-        pareto_programs = {str(i): list(self.pareto_candidates) for i in range(5)} if self.pareto_candidates else None
+        # Build pareto_programs dict - server expects dict[str, int] not dict[str, list]
+        # Use first pareto candidate index for each slot, or None if not available
+        pareto_programs = None
+        if self.pareto_candidates:
+            first_pareto = self.pareto_candidates[0] if self.pareto_candidates else 0
+            pareto_programs = {str(i): first_pareto for i in range(5)}
 
         self.client.push_iteration(
             iteration_number=ui_iteration,

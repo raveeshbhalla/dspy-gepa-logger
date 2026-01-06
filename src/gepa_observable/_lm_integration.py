@@ -46,7 +46,12 @@ def auto_register_lm_logger(lm_logger: DSPyLMLogger) -> bool:
             if callbacks is None:
                 current_lm.callbacks = [lm_logger]
                 return True
-            elif lm_logger not in callbacks:
+
+            # Normalize non-iterable callbacks to a list
+            if not isinstance(callbacks, (list, tuple)):
+                callbacks = [callbacks]
+
+            if lm_logger not in callbacks:
                 # Reassign to handle both mutable and immutable callback collections
                 current_lm.callbacks = list(callbacks) + [lm_logger]
                 return True
