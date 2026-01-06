@@ -329,8 +329,9 @@ def optimize(
         # Get raw lists for example lookup (used for serializing example inputs/outputs)
         # Note: This materializes the DataLoader into memory. For very large datasets,
         # consider using ServerObserver directly with lazy example lookup instead.
-        trainset_list = list(train_loader) if hasattr(train_loader, "__iter__") else []
-        valset_list = list(val_loader) if hasattr(val_loader, "__iter__") else []
+        # DataLoader doesn't have __iter__, so we use fetch with all indices.
+        trainset_list = train_loader.fetch(list(range(len(train_loader)))) if len(train_loader) > 0 else []
+        valset_list = val_loader.fetch(list(range(len(val_loader)))) if len(val_loader) > 0 else []
 
         server_observer = ServerObserver(
             server_url=server_url,
@@ -372,7 +373,9 @@ def optimize(
 
     def evaluator(inputs: list[DataInst], prog: dict[str, str]) -> tuple[list[RolloutOutput], list[float], list[str | None] | None]:
         eval_out = active_adapter.evaluate(inputs, prog, capture_traces=False)
-        return eval_out.outputs, eval_out.scores, eval_out.feedbacks
+        # feedbacks may not be present in all adapters (e.g., DSPy's DspyAdapter)
+        feedbacks = getattr(eval_out, 'feedbacks', None)
+        return eval_out.outputs, eval_out.scores, feedbacks
 
     merge_proposer: MergeProposer | None = None
     if use_merge:

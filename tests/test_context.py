@@ -13,7 +13,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from dspy_gepa_logger.core.context import (
+from gepa_observable.core.context import (
     set_ctx,
     get_ctx,
     clear_ctx,

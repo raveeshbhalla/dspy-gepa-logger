@@ -1,29 +1,27 @@
-"""Example using gepa-observable with simplified API.
+"""Example using gepa-observable with the GEPA Teleprompter class.
 
-This example shows how to use the gepa-observable fork which now provides:
+This example shows how to use the gepa-observable package which provides:
 
-1. Built-in observers - LoggingObserver and ServerObserver are included
-2. Auto-observer setup - Just pass server_url to enable dashboard
-3. Convenience parameters - verbose, capture_lm_calls, capture_stdout
+1. DSPy-compatible GEPA Teleprompter class with compile() method
+2. Built-in observers - LoggingObserver and ServerObserver
+3. Auto-observer setup - Just pass server_url to enable dashboard
+4. Full API compatibility with dspy.GEPA (auto, max_full_evals, etc.)
 
-## Quick Start (Simplest Usage)
+## Quick Start (DSPy-style)
 
-    from gepa_observable import optimize
+    from gepa_observable import GEPA
 
-    result = optimize(
-        seed_candidate=seed,
-        trainset=train,
-        valset=val,
-        adapter=adapter,
-        reflection_lm="openai/gpt-4o",
-        max_metric_calls=100,
+    optimizer = GEPA(
+        metric=my_metric,
+        auto="medium",  # or max_full_evals=10, or max_metric_calls=500
         server_url="http://localhost:3000",  # Enables dashboard
     )
+    optimized = optimizer.compile(student=program, trainset=train, valset=val)
 
 ## What Changed
 
 Before: ~500 lines of boilerplate (copy LoggingObserver, ServerObserver, serialization, wiring)
-After: Just add server_url parameter to optimize()
+After: Use GEPA class like standard DSPy optimizers
 """
 
 import argparse
@@ -31,15 +29,14 @@ import dspy
 from dotenv import load_dotenv
 import os
 import random
-import shutil
 import pandas as pd
 
-# Import from gepa-observable - note how simple the imports are now!
-from gepa_observable import optimize
+# Import from gepa-observable - note the DSPy-compatible import!
+from gepa_observable import GEPA
 
 
 # =============================================================================
-# DSPy Program Setup (same as before)
+# DSPy Program Setup (same as with any DSPy optimizer)
 # =============================================================================
 
 
@@ -53,15 +50,42 @@ class Prompt(dspy.Signature):
 program = dspy.ChainOfThought(Prompt)
 
 
-def metric_with_feedback(gold, pred, trace=None, pred_name=None, pred_trace=None):
+def metric_with_feedback(
+    gold=None, pred=None, trace=None, pred_name=None, pred_trace=None,
+    # DSPy's DspyAdapter feedback_map calls with these keyword args:
+    predictor_output=None, predictor_inputs=None, module_inputs=None, module_outputs=None, captured_trace=None,
+    module_score=None,  # Passed during reflection - must return this exact score
+    **kwargs
+):
     """Metric that returns score and feedback.
 
-    GEPA requires 5 arguments: (gold, pred, trace, pred_name, pred_trace).
+    This metric supports two calling conventions:
+    1. GEPA standard: (gold, pred, trace, pred_name, pred_trace)
+    2. DSPy feedback: (predictor_output, predictor_inputs, module_inputs, module_outputs, captured_trace, module_score)
+
+    Returns a dspy.Prediction with 'score' and 'feedback' fields.
+
+    Note: During reflection, GEPA passes module_score which must be returned exactly.
+    This handles the case of non-deterministic metrics (like semantic similarity).
     """
-    if pred.answer.lower() == gold.answer.lower():
-        return dspy.Prediction(score=random.uniform(0.7, 1.0), feedback="Great work!")
+    # Handle DSPy's feedback function signature (module_inputs=gold, module_outputs=pred)
+    if module_inputs is not None:
+        gold = module_inputs
+    if module_outputs is not None:
+        pred = module_outputs
+
+    # Determine if correct
+    is_correct = pred.answer.lower() == gold.answer.lower()
+
+    # During reflection, GEPA passes module_score - we MUST return it exactly
+    if module_score is not None:
+        score = module_score
     else:
-        return dspy.Prediction(score=random.uniform(0.0, 0.2), feedback="Nice try")
+        # Use deterministic score for first evaluation, random for variation
+        score = 1.0 if is_correct else 0.0
+
+    feedback = "Great work!" if is_correct else f"Nice try - expected '{gold.answer}'"
+    return dspy.Prediction(score=score, feedback=feedback)
 
 
 def get_data():
@@ -76,34 +100,27 @@ def get_data():
 
 
 # =============================================================================
-# Main Function - Now Much Simpler!
+# Main Function - Using the DSPy-compatible GEPA Teleprompter
 # =============================================================================
 
 
 def main(use_server: bool = False, server_url: str = "http://localhost:3000", use_mlflow: bool = False):
-    """Run GEPA optimization with the new simplified API."""
+    """Run GEPA optimization with the new DSPy-compatible API."""
     # Configure DSPy
     load_dotenv(".env.local")
 
     # Get LM configuration from environment variables
     lm_model = os.getenv("DSPY_LM", "openai/gpt-4o-mini")
-    reflective_lm_model = os.getenv("DSPY_REFLECTIVE_LM", "openai/gpt-4o")
+    # Use same LM for reflection unless DSPY_REFLECTIVE_LM is explicitly set
+    reflective_lm_model = os.getenv("DSPY_REFLECTIVE_LM", lm_model)
 
     # Configure DSPy LM
     lm = dspy.LM(lm_model, temperature=1.0)
+    reflective_lm = dspy.LM(reflective_lm_model, temperature=1.0)
     dspy.configure(lm=lm)
 
-    # Wrap reflective_lm to return a string (GEPA expects lm(prompt) -> str, not list)
-    _reflective_lm_base = dspy.LM(reflective_lm_model, temperature=1.0)
-
-    def reflective_lm(prompt: str) -> str:
-        result = _reflective_lm_base(prompt)
-        if isinstance(result, list):
-            return result[0] if result else ""
-        return result
-
     print("=" * 60)
-    print("GEPA Observable - Simplified API")
+    print("GEPA Observable - DSPy-compatible Teleprompter")
     if use_mlflow:
         print("MLflow tracing enabled")
     if use_server:
@@ -116,76 +133,27 @@ def main(use_server: bool = False, server_url: str = "http://localhost:3000", us
     print("\nRunning GEPA optimization...")
     print("-" * 40)
 
-    # Create DSPy adapter for GEPA
-    from gepa_observable.adapters.dspy_adapter.dspy_adapter import DspyAdapter
-
-    def feedback_fn_creator(pred_name, predictor):
-        def feedback_fn(
-            predictor_output=None,
-            predictor_inputs=None,
-            module_inputs=None,
-            module_outputs=None,
-            captured_trace=None,
-            module_score=None,
-            **kwargs
-        ):
-            if module_outputs is None:
-                return {"feedback": "No output", "score": 0.0}
-
-            answer = getattr(module_outputs, "answer", "")
-            gold_answer = getattr(module_inputs, "answer", "") if module_inputs else ""
-
-            if module_score is not None:
-                score = module_score
-            else:
-                score = 1.0 if answer.lower() == gold_answer.lower() else 0.0
-
-            if answer.lower() == gold_answer.lower():
-                return {"feedback": "Great work!", "score": score}
-            else:
-                return {"feedback": "Nice try", "score": score}
-        return feedback_fn
-
-    feedback_map = {k: feedback_fn_creator(k, v) for k, v in program.named_predictors()}
-
-    adapter = DspyAdapter(
-        student_module=program,
-        metric_fn=metric_with_feedback,
-        feedback_map=feedback_map,
-        failure_score=0.0,
-        num_threads=4,
-    )
-
-    # Build seed candidate from program's predictor instructions
-    seed_candidate = {name: pred.signature.instructions for name, pred in program.named_predictors()}
-
     # ==========================================================================
-    # THE NEW SIMPLIFIED API
+    # THE NEW DSPy-COMPATIBLE API
     # ==========================================================================
     #
-    # Before: ~200 lines of boilerplate to set up observers
-    # After: Just add server_url parameter!
+    # Just like dspy.GEPA, but with observability built-in!
     #
-    # The optimize() function now:
-    # - Auto-creates LoggingObserver when verbose=True (default)
-    # - Auto-creates ServerObserver when server_url is provided
-    # - Auto-registers LM logger for LM call capture
-    # - Auto-captures stdout to dashboard
+    # Budget options (exactly one required):
+    # - auto="light|medium|heavy" - automatic budget based on dataset size
+    # - max_full_evals=N - maximum full validation evaluations
+    # - max_metric_calls=N - maximum total metric calls
     #
-    result = optimize(
-        seed_candidate=seed_candidate,
-        trainset=train_data,
-        valset=val_data,
-        adapter=adapter,
+    optimizer = GEPA(
+        metric=metric_with_feedback,
+        max_full_evals=2,  # or auto="medium", or max_metric_calls=500
         reflection_lm=reflective_lm,
         reflection_minibatch_size=5,
-        max_metric_calls=100,
         skip_perfect_score=False,
-        run_dir="logs",
         # MLflow integration (optional)
         use_mlflow=use_mlflow,
         mlflow_tracing=use_mlflow,
-        # NEW: Convenience parameters for auto-observer setup
+        # Observable features - just add server_url to enable dashboard!
         server_url=server_url if use_server else None,
         project_name="Example",
         verbose=True,  # Auto-creates LoggingObserver (default)
@@ -193,13 +161,29 @@ def main(use_server: bool = False, server_url: str = "http://localhost:3000", us
         capture_stdout=True,  # Capture stdout to dashboard (default)
     )
 
+    # Compile (optimize) the program - just like any DSPy optimizer!
+    optimized = optimizer.compile(
+        student=program,
+        trainset=train_data,
+        valset=val_data,
+    )
+
     # ==================== RESULTS ====================
 
     print("\n" + "=" * 60)
     print("RESULTS")
     print("=" * 60)
-    print(f"Best candidate index: {result.best_idx}")
-    print(f"Best candidate score: {result.val_aggregate_scores[result.best_idx]:.2%}")
+
+    # Test the optimized program
+    test_question = "What is the capital of France?"
+    result = optimized(question=test_question)
+    print(f"Test question: {test_question}")
+    print(f"Optimized answer: {result.answer}")
+
+    # Show detailed results if tracking stats
+    if hasattr(optimized, "detailed_results"):
+        print(f"\nDetailed results available: {list(optimized.detailed_results.keys())}")
+
     print("\n" + "=" * 60)
     print("Done!")
     if use_server:
@@ -208,12 +192,38 @@ def main(use_server: bool = False, server_url: str = "http://localhost:3000", us
 
 
 # =============================================================================
-# Advanced Usage Example
+# Alternative: Using optimize() directly
 # =============================================================================
 #
-# If you need more control, you can still use custom observers:
+# If you need more control (custom adapter, etc.), you can still use optimize():
 #
-#     from gepa_observable import optimize, LoggingObserver, ServerObserver
+#     from gepa_observable import optimize
+#     from gepa_observable.adapters.dspy_adapter.dspy_adapter import DspyAdapter
+#
+#     adapter = DspyAdapter(
+#         student_module=program,
+#         metric_fn=metric,
+#         feedback_map={...},
+#     )
+#     seed_candidate = {name: pred.signature.instructions for name, pred in program.named_predictors()}
+#
+#     result = optimize(
+#         seed_candidate=seed_candidate,
+#         trainset=train_data,
+#         valset=val_data,
+#         adapter=adapter,
+#         server_url="http://localhost:3000",
+#         ...
+#     )
+#
+
+# =============================================================================
+# Advanced: Custom Observers
+# =============================================================================
+#
+# If you need more control over observers:
+#
+#     from gepa_observable import GEPA, LoggingObserver, ServerObserver
 #
 #     # Create custom observers
 #     logging_obs = LoggingObserver(verbose=True, show_prompts=True)
@@ -224,20 +234,22 @@ def main(use_server: bool = False, server_url: str = "http://localhost:3000", us
 #         capture_lm_calls=True,
 #     )
 #
-#     result = optimize(
-#         ...,
+#     optimizer = GEPA(
+#         metric=metric,
+#         max_metric_calls=100,
 #         observers=[logging_obs, server_obs],
 #         verbose=False,  # Disable auto-LoggingObserver since we're using our own
 #     )
 #
 #     # Access observer state after optimization
+#     optimized = optimizer.compile(student=program, trainset=train, valset=val)
 #     print(logging_obs.get_summary())
 #     print(f"LM calls: {server_obs.lm_call_count}")
 #
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run GEPA optimization with simplified API")
+    parser = argparse.ArgumentParser(description="Run GEPA optimization with DSPy-compatible API")
     parser.add_argument(
         "--server",
         action="store_true",
@@ -253,22 +265,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Enable MLflow tracing for hierarchical LM call spans",
     )
-    parser.add_argument(
-        "--fresh",
-        action="store_true",
-        help="Clear existing GEPA state and start fresh optimization",
-    )
     args = parser.parse_args()
-
-    # Clear GEPA state if --fresh flag is set
-    if args.fresh:
-        gepa_state_path = os.path.join("logs", "gepa_state.bin")
-        if os.path.exists(gepa_state_path):
-            os.remove(gepa_state_path)
-            print("Cleared existing GEPA state")
-        outputs_dir = os.path.join("logs", "generated_best_outputs_valset")
-        if os.path.exists(outputs_dir):
-            shutil.rmtree(outputs_dir)
-            print("Cleared generated outputs directory")
 
     main(use_server=args.server, server_url=args.server_url, use_mlflow=args.mlflow)

@@ -1,7 +1,11 @@
 # Copyright (c) 2025 - GEPA Observable Fork
 # A fork of GEPA with first-class observer support for full optimization observability
+#
+# This package provides an observable GEPA optimizer with DSPy-compatible API.
+# Use the GEPA class for a Teleprompter-style interface, or optimize() for direct access.
 
 from gepa_observable.api import optimize
+from gepa_observable.gepa import GEPA
 from gepa_observable.observers import (
     # Event dataclasses
     AcceptanceDecisionEvent,
@@ -21,7 +25,9 @@ from gepa_observable.observers import (
 )
 
 __all__ = [
-    # Main API
+    # Main API - DSPy-compatible Teleprompter
+    "GEPA",
+    # Direct API - for advanced usage
     "optimize",
     # Observer protocol and manager
     "GEPAObserver",

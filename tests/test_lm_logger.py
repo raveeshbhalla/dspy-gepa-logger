@@ -12,8 +12,8 @@ import pytest
 import time
 from unittest.mock import Mock
 
-from dspy_gepa_logger.core.context import clear_ctx, set_ctx
-from dspy_gepa_logger.core.lm_logger import DSPyLMLogger, LMCall
+from gepa_observable.core.context import clear_ctx, set_ctx
+from gepa_observable.core.lm_logger import DSPyLMLogger, LMCall
 
 
 class MockLMInstance:
