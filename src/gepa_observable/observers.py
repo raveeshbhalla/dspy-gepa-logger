@@ -626,7 +626,8 @@ class ServerObserver:
         # Use first pareto candidate index for each slot, or None if not available
         pareto_programs = None
         if self.pareto_candidates:
-            first_pareto = self.pareto_candidates[0] if self.pareto_candidates else 0
+            # pareto_candidates is a set, use next(iter(...)) to get first element
+            first_pareto = next(iter(self.pareto_candidates))
             pareto_programs = {str(i): first_pareto for i in range(5)}
 
         self.client.push_iteration(
