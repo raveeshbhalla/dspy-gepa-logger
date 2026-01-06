@@ -412,8 +412,9 @@ class ServerObserver:
         ...     capture_lm_calls=True,
         ... )
         >>> server.set_examples(train_data, val_data)
-        >>> # Register LM logger with your DSPy LM
-        >>> lm = dspy.LM("...", callbacks=[server.get_lm_logger()])
+        >>> # Register LM logger with your DSPy LM (guard for None)
+        >>> logger = server.get_lm_logger()
+        >>> lm = dspy.LM("...", callbacks=[logger] if logger else [])
     """
 
     def __init__(
@@ -535,7 +536,8 @@ class ServerObserver:
 
         Example:
             >>> server = ServerObserver(...)
-            >>> lm = dspy.LM("openai/gpt-4o", callbacks=[server.get_lm_logger()])
+            >>> logger = server.get_lm_logger()
+            >>> lm = dspy.LM("openai/gpt-4o", callbacks=[logger] if logger else [])
         """
         return self._lm_logger
 
