@@ -2,6 +2,8 @@
 
 Lightweight logging and visualization for DSPy GEPA optimization runs. Track evaluations, compare prompts, and generate HTML reports.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/raveeshbhalla/dspy-gepa-logger)
+
 ## Features
 
 - **Observer Pattern Architecture**: First-class observer callbacks via `gepa_observable` for complete optimization visibility
