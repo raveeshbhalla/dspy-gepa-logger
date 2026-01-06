@@ -7,7 +7,7 @@ import warnings
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dspy_gepa_logger.core.lm_logger import DSPyLMLogger
+    from gepa_observable.core.lm_logger import DSPyLMLogger
 
 
 def auto_register_lm_logger(lm_logger: DSPyLMLogger) -> bool:
@@ -24,7 +24,7 @@ def auto_register_lm_logger(lm_logger: DSPyLMLogger) -> bool:
         True if registration was successful, False otherwise.
 
     Example:
-        >>> from dspy_gepa_logger.core.lm_logger import DSPyLMLogger
+        >>> from gepa_observable.core.lm_logger import DSPyLMLogger
         >>> from gepa_observable._lm_integration import auto_register_lm_logger
         >>> lm_logger = DSPyLMLogger()
         >>> if auto_register_lm_logger(lm_logger):

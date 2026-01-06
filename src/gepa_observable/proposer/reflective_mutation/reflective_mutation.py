@@ -161,6 +161,8 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
         state.full_program_trace[-1]["subsample_scores"] = eval_curr.scores
 
         # Notify observers of parent minibatch evaluation
+        # Note: feedbacks may not be present in all adapters (e.g., DSPy's DspyAdapter)
+        curr_feedbacks = getattr(eval_curr, 'feedbacks', None)
         self.observer_manager.notify_minibatch_eval(MiniBatchEvalEvent(
             iteration=state.i,
             candidate_idx=curr_prog_id,
@@ -170,7 +172,7 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
             outputs=list(eval_curr.outputs),
             trajectories=eval_curr.trajectories,
             is_new_candidate=False,
-            feedbacks=list(eval_curr.feedbacks) if eval_curr.feedbacks else None,
+            feedbacks=list(curr_feedbacks) if curr_feedbacks else None,
         ))
 
         if not eval_curr.trajectories or len(eval_curr.trajectories) == 0:
@@ -243,6 +245,8 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
         state.full_program_trace[-1]["new_subsample_scores"] = eval_new.scores
 
         # Notify observers of new candidate minibatch evaluation
+        # Note: feedbacks may not be present in all adapters (e.g., DSPy's DspyAdapter)
+        new_feedbacks = getattr(eval_new, 'feedbacks', None)
         self.observer_manager.notify_minibatch_eval(MiniBatchEvalEvent(
             iteration=state.i,
             candidate_idx=new_candidate_idx,  # This is the prospective index if accepted
@@ -252,7 +256,7 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
             outputs=list(eval_new.outputs),
             trajectories=None,  # No traces captured for new candidate eval
             is_new_candidate=True,
-            feedbacks=list(eval_new.feedbacks) if eval_new.feedbacks else None,
+            feedbacks=list(new_feedbacks) if new_feedbacks else None,
         ))
 
         new_sum = sum(eval_new.scores)

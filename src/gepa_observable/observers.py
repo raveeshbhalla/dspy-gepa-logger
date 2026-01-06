@@ -13,10 +13,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol, runtime_checkable
 
-# Import from dspy_gepa_logger for serialization and server integration
-from dspy_gepa_logger.core.serialization import serialize_output, serialize_example_inputs
-from dspy_gepa_logger.server.client import ServerClient
-from dspy_gepa_logger.core.lm_logger import DSPyLMLogger, LMCall
+# Import from local core and server modules
+from gepa_observable.core.serialization import serialize_output, serialize_example_inputs
+from gepa_observable.server.client import ServerClient
+from gepa_observable.core.lm_logger import DSPyLMLogger, LMCall
 
 
 @dataclass
