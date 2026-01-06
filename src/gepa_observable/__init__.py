@@ -3,16 +3,21 @@
 
 from gepa_observable.api import optimize
 from gepa_observable.observers import (
+    # Event dataclasses
     AcceptanceDecisionEvent,
-    GEPAObserver,
     IterationStartEvent,
     MergeEvent,
     MiniBatchEvalEvent,
-    ObserverManager,
     OptimizationCompleteEvent,
     ReflectionEvent,
     SeedValidationEvent,
     ValsetEvalEvent,
+    # Protocol and manager
+    GEPAObserver,
+    ObserverManager,
+    # Built-in observers
+    LoggingObserver,
+    ServerObserver,
 )
 
 __all__ = [
@@ -21,6 +26,9 @@ __all__ = [
     # Observer protocol and manager
     "GEPAObserver",
     "ObserverManager",
+    # Built-in observers
+    "LoggingObserver",
+    "ServerObserver",
     # Event dataclasses
     "SeedValidationEvent",
     "IterationStartEvent",

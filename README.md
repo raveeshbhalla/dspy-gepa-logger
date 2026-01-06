@@ -36,13 +36,13 @@ pip install -e .
 
 ## Quick Start
 
-### Using gepa_observable (Recommended)
+### Simplest Usage (Recommended)
 
-The `gepa_observable` module provides first-class observer callbacks for complete optimization visibility:
+The `gepa_observable` module now includes built-in observers with sensible defaults. Just add `server_url` to enable the web dashboard:
 
 ```python
 import dspy
-from gepa_observable import optimize, GEPAObserver
+from gepa_observable import optimize
 from gepa_observable.adapters.dspy_adapter import DspyAdapter
 
 # Configure DSPy
@@ -75,7 +75,75 @@ adapter = DspyAdapter(
 seed_candidate = {name: pred.signature.instructions
                   for name, pred in program.named_predictors()}
 
-# Create an observer (or use built-in ServerObserver for web dashboard)
+# Run optimization - that's it!
+result = optimize(
+    seed_candidate=seed_candidate,
+    trainset=train_data,
+    valset=val_data,
+    adapter=adapter,
+    reflection_lm="openai/gpt-4o",
+    max_metric_calls=100,
+    # Dashboard integration - just add server_url
+    server_url="http://localhost:3000",
+    project_name="My Project",
+)
+
+print(f"Best score: {result.val_aggregate_scores[result.best_idx]:.2%}")
+```
+
+### Convenience Parameters
+
+The `optimize()` function now includes these convenience parameters that auto-configure observers:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `server_url` | `None` | If set, auto-creates `ServerObserver` for dashboard integration |
+| `project_name` | `"GEPA Run"` | Project name for the dashboard |
+| `run_name` | `None` | Run name (auto-generated if None) |
+| `verbose` | `True` | If True, auto-creates `LoggingObserver` for console output |
+| `capture_lm_calls` | `True` | If True + server_url, captures LM calls to dashboard |
+| `capture_stdout` | `True` | If True + server_url, captures stdout to dashboard |
+
+### Built-in Observers
+
+Two observers are included out of the box:
+
+- **`LoggingObserver`**: Console logging with iteration progress and scores
+- **`ServerObserver`**: Full dashboard integration with LM call capture
+
+```python
+from gepa_observable import optimize, LoggingObserver, ServerObserver
+
+# Use built-in observers directly for more control
+logging_obs = LoggingObserver(verbose=True, show_prompts=True)
+server_obs = ServerObserver.create(
+    server_url="http://localhost:3000",
+    trainset=train_data,
+    valset=val_data,
+    capture_lm_calls=True,
+)
+
+result = optimize(
+    seed_candidate=seed_candidate,
+    trainset=train_data,
+    valset=val_data,
+    adapter=adapter,
+    reflection_lm="openai/gpt-4o",
+    max_metric_calls=100,
+    observers=[logging_obs, server_obs],
+    verbose=False,  # Disable auto-LoggingObserver since we're using our own
+)
+
+# Access observer state after optimization
+print(logging_obs.get_summary())
+print(f"LM calls: {server_obs.lm_call_count}")
+```
+
+### Custom Observers
+
+For full control, implement your own observer with any subset of callbacks:
+
+```python
 class MyObserver:
     def on_seed_validation(self, event):
         print(f"Seed avg score: {sum(event.valset_scores.values())/len(event.valset_scores):.2%}")
@@ -87,19 +155,15 @@ class MyObserver:
     def on_optimization_complete(self, event):
         print(f"Done! Best score: {event.best_score:.2%}")
 
-# Run optimization with observers
 result = optimize(
     seed_candidate=seed_candidate,
     trainset=train_data,
     valset=val_data,
     adapter=adapter,
-    reflection_lm=dspy.LM("openai/gpt-4o"),
+    reflection_lm="openai/gpt-4o",
     max_metric_calls=100,
     observers=[MyObserver()],
-    mlflow_tracing=False,  # Optional MLflow integration
 )
-
-print(f"Best candidate: {result.best_candidate}")
 ```
 
 ### Observer Events
@@ -336,37 +400,31 @@ The dashboard will be available at http://localhost:3000.
 
 #### With gepa_observable (Recommended)
 
-See `examples/eg_v2_simple.py` for a complete example using the `ServerObserver`:
+Just add `server_url` to the `optimize()` call - the built-in `ServerObserver` handles everything automatically:
 
 ```python
 from gepa_observable import optimize
-from dspy_gepa_logger.server.client import ServerClient
 
-# Create a server observer (see examples/eg_v2_simple.py for full implementation)
-class ServerObserver:
-    def __init__(self, server_url: str):
-        self.client = ServerClient(server_url, project_name="My Project")
-
-    def on_seed_validation(self, event):
-        self.client.start_run(config={}, seed_prompt=seed_candidate)
-        self.client.push_evaluations([...])
-
-    def on_valset_eval(self, event):
-        self.client.push_evaluations([...])
-        self.client.push_candidates([...])
-
-    def on_optimization_complete(self, event):
-        self.client.complete_run(status="COMPLETED", best_score=event.best_score)
-
-# Run with server observer
 result = optimize(
     seed_candidate=seed_candidate,
     trainset=train_data,
     valset=val_data,
     adapter=adapter,
-    observers=[ServerObserver("http://localhost:3000")],
+    reflection_lm="openai/gpt-4o",
+    max_metric_calls=100,
+    # Just add these two lines for dashboard integration
+    server_url="http://localhost:3000",
+    project_name="My Experiment",
 )
 ```
+
+This automatically:
+- Creates a `ServerObserver` with dashboard integration
+- Captures all evaluations, candidates, and LM calls
+- Streams stdout to the dashboard
+- Handles run lifecycle (start/complete)
+
+See `examples/eg_v2_simple.py` for a complete working example.
 
 #### With Legacy API
 
