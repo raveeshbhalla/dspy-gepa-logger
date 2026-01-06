@@ -32,7 +32,8 @@ from gepa.core.result import GEPAResult
 # Local imports for modified modules
 from gepa_observable.core.engine import GEPAEngine
 from gepa_observable.proposer.reflective_mutation.reflective_mutation import ReflectiveMutationProposer
-from gepa_observable.observers import GEPAObserver, ObserverManager
+from gepa_observable.observers import GEPAObserver, LoggingObserver, ObserverManager, ServerObserver
+from gepa_observable._lm_integration import auto_register_lm_logger, warn_lm_logger_not_registered
 
 
 def optimize(
@@ -77,13 +78,43 @@ def optimize(
     # GEPA Observable additions
     observers: list[GEPAObserver] | None = None,
     mlflow_tracing: bool = False,
+    # Convenience parameters for auto-observer setup
+    server_url: str | None = None,
+    project_name: str = "GEPA Run",
+    run_name: str | None = None,
+    verbose: bool = True,
+    capture_lm_calls: bool = True,
+    capture_stdout: bool = True,
 ) -> GEPAResult[RolloutOutput, DataId]:
     """
     GEPA is an evolutionary optimizer that evolves (multiple) text components of a complex system to optimize them towards a given metric.
 
     This is the gepa-observable fork with first-class observer support for full optimization observability.
 
-    ## Observer Support (gepa-observable addition)
+    ## Quick Start
+
+    The simplest way to use optimize() is with just a server_url to enable the dashboard:
+
+        result = optimize(
+            seed_candidate=seed,
+            trainset=train,
+            valset=val,
+            adapter=adapter,
+            reflection_lm="openai/gpt-4o",
+            max_metric_calls=100,
+            server_url="http://localhost:3000",  # Enables dashboard
+        )
+
+    ## Convenience Parameters (gepa-observable addition)
+
+    - server_url: If provided, auto-creates a ServerObserver for dashboard integration.
+    - project_name: Project name for the dashboard (default: "GEPA Run").
+    - run_name: Run name for the dashboard (auto-generated if None).
+    - verbose: If True, auto-creates a LoggingObserver for console output (default: True).
+    - capture_lm_calls: If True and server_url is set, captures LM calls (default: True).
+    - capture_stdout: If True and server_url is set, captures stdout to dashboard (default: True).
+
+    ## Observer Support
 
     - observers: List of GEPAObserver instances to receive callbacks during optimization.
       Each observer can implement any subset of:
@@ -277,9 +308,48 @@ def optimize(
             "Set reflection_prompt_template to None."
         )
 
+    # ==========================================================================
+    # Auto-observer setup based on convenience parameters
+    # ==========================================================================
+    all_observers: list[GEPAObserver] = list(observers) if observers else []
+    server_observer: ServerObserver | None = None
+
+    # Check if user already provided a LoggingObserver
+    has_logging_observer = any(isinstance(o, LoggingObserver) for o in all_observers)
+
+    # Check if user already provided a ServerObserver
+    has_server_observer = any(isinstance(o, ServerObserver) for o in all_observers)
+
+    # Auto-create LoggingObserver if verbose=True and not already provided
+    if verbose and not has_logging_observer:
+        all_observers.append(LoggingObserver(verbose=True))
+
+    # Auto-create ServerObserver if server_url is provided and not already provided
+    if server_url and not has_server_observer:
+        # Get raw lists for example lookup
+        trainset_list = list(train_loader) if hasattr(train_loader, "__iter__") else []
+        valset_list = list(val_loader) if hasattr(val_loader, "__iter__") else []
+
+        server_observer = ServerObserver(
+            server_url=server_url,
+            project_name=project_name,
+            run_name=run_name,
+            capture_lm_calls=capture_lm_calls,
+            capture_stdout=capture_stdout,
+        )
+        server_observer.set_examples(trainset_list, valset_list)
+        all_observers.append(server_observer)
+
+        # Auto-register LM logger with DSPy if capture_lm_calls is enabled
+        if capture_lm_calls:
+            lm_logger = server_observer.get_lm_logger()
+            if lm_logger is not None:
+                if not auto_register_lm_logger(lm_logger):
+                    warn_lm_logger_not_registered()
+
     # Create observer manager
     observer_manager = ObserverManager(
-        observers=observers or [],
+        observers=all_observers,
         mlflow_tracing=mlflow_tracing,
     )
 
