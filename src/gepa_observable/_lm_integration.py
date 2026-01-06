@@ -47,7 +47,8 @@ def auto_register_lm_logger(lm_logger: DSPyLMLogger) -> bool:
                 current_lm.callbacks = [lm_logger]
                 return True
             elif lm_logger not in callbacks:
-                callbacks.append(lm_logger)
+                # Reassign to handle both mutable and immutable callback collections
+                current_lm.callbacks = list(callbacks) + [lm_logger]
                 return True
             else:
                 # Already registered

@@ -237,35 +237,39 @@ class LogCapture(io.TextIOBase):
         # Buffer and push to server
         with self._lock:
             self._buffer.append(s)
-            # Flush on newlines
-            if "\n" in s and self._client and self._client.is_connected:
+            # Flush on newlines - always clear buffer to prevent memory leaks
+            if "\n" in s:
                 content = "".join(self._buffer)
                 self._buffer = []
-                try:
-                    self._client.push_logs([{
-                        "logType": self._stream_type,
-                        "content": content,
-                        "timestamp": time.time(),
-                    }])
-                except Exception:
-                    pass  # Don't fail if server push fails
+                # Only push to server if connected
+                if self._client and self._client.is_connected:
+                    try:
+                        self._client.push_logs([{
+                            "logType": self._stream_type,
+                            "content": content,
+                            "timestamp": time.time(),
+                        }])
+                    except Exception:
+                        pass  # Don't fail if server push fails
 
         return len(s) if result is None else result
 
     def flush(self) -> None:
         self._original.flush()
         with self._lock:
-            if self._buffer and self._client and self._client.is_connected:
+            if self._buffer:
                 content = "".join(self._buffer)
                 self._buffer = []
-                try:
-                    self._client.push_logs([{
-                        "logType": self._stream_type,
-                        "content": content,
-                        "timestamp": time.time(),
-                    }])
-                except Exception:
-                    pass
+                # Only push to server if connected
+                if self._client and self._client.is_connected:
+                    try:
+                        self._client.push_logs([{
+                            "logType": self._stream_type,
+                            "content": content,
+                            "timestamp": time.time(),
+                        }])
+                    except Exception:
+                        pass
 
     def fileno(self) -> int:
         return self._original.fileno()
@@ -317,7 +321,7 @@ class LoggingObserver:
         self.accepted_candidates: list[int] = []
 
     def on_seed_validation(self, event: SeedValidationEvent) -> None:
-        avg_score = sum(event.valset_scores.values()) / len(event.valset_scores)
+        avg_score = (sum(event.valset_scores.values()) / len(event.valset_scores)) if event.valset_scores else 0.0
         if self.verbose:
             print(f"\n[Seed] Validated seed candidate: avg score = {avg_score:.2%}")
             print(f"       Total evals: {event.total_evals}")
@@ -331,7 +335,7 @@ class LoggingObserver:
 
     def on_minibatch_eval(self, event: MiniBatchEvalEvent) -> None:
         if self.verbose:
-            avg_score = sum(event.scores) / len(event.scores)
+            avg_score = (sum(event.scores) / len(event.scores)) if event.scores else 0.0
             candidate_type = "NEW" if event.is_new_candidate else "parent"
             print(f"         [{candidate_type}] Minibatch eval: avg = {avg_score:.2%} (n={len(event.scores)})")
             if event.trajectories:

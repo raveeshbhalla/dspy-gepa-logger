@@ -326,7 +326,9 @@ def optimize(
 
     # Auto-create ServerObserver if server_url is provided and not already provided
     if server_url and not has_server_observer:
-        # Get raw lists for example lookup
+        # Get raw lists for example lookup (used for serializing example inputs/outputs)
+        # Note: This materializes the DataLoader into memory. For very large datasets,
+        # consider using ServerObserver directly with lazy example lookup instead.
         trainset_list = list(train_loader) if hasattr(train_loader, "__iter__") else []
         valset_list = list(val_loader) if hasattr(val_loader, "__iter__") else []
 
