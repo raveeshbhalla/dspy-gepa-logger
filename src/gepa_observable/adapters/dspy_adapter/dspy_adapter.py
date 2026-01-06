@@ -16,6 +16,8 @@ from dspy.teleprompt.bootstrap_trace import TraceData
 # Use our forked EvaluationBatch which has the 'feedbacks' field
 from gepa_observable.core.adapter import EvaluationBatch, GEPAAdapter
 
+logger = logging.getLogger(__name__)
+
 
 class LoggerAdapter:
     def __init__(self, logger: logging.Logger):
@@ -261,12 +263,14 @@ class DspyAdapter(GEPAAdapter[Example, TraceData, Prediction]):
                         module_inputs=example,
                         module_outputs=prediction,
                         captured_trace=trace,
-                        module_score=module_score,  # Pass the score so feedback_fn can return it
                     )
                     d["Feedback"] = fb["feedback"]
-                    assert fb["score"] == module_score, (
-                        f"Currently, GEPA only supports feedback functions that return the same score as the module's score. However, the module-level score is {module_score} and the feedback score is {fb['score']}."
-                    )
+                    # Warn if scores mismatch (DSPy doesn't support predictor-level scoring)
+                    if fb["score"] != module_score and self.warn_on_score_mismatch:
+                        logger.warning(
+                            f"Score mismatch: feedback returned {fb['score']}, module score was {module_score}. "
+                            "GEPA does not support predictor-level scoring; using module score."
+                        )
                     # d['score'] = fb.score
                 items.append(d)
 
