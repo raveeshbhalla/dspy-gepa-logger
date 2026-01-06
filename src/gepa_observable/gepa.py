@@ -3,10 +3,18 @@
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from dspy.teleprompt import Teleprompter
+
+# DSPy GEPA auto run settings - number of candidates for each preset
+AUTO_RUN_SETTINGS = {
+    "light": 6,
+    "medium": 12,
+    "heavy": 18,
+}
 
 from gepa_observable.observers import GEPAObserver, LoggingObserver, ServerObserver
 
@@ -51,7 +59,7 @@ class GEPA(Teleprompter):
         - A dspy.Prediction with 'score' and optionally 'feedback' fields
 
     Budget Control (exactly one required):
-        - auto: "light", "medium", or "heavy" preset
+        - auto: "light" (6 candidates), "medium" (12), or "heavy" (18) preset
         - max_full_evals: Maximum full validation evaluations
         - max_metric_calls: Maximum total metric calls
 
@@ -113,7 +121,7 @@ class GEPA(Teleprompter):
             metric: Evaluation metric function (5-argument GEPA feedback metric)
 
             Budget (exactly one required):
-                auto: Preset budget - "light", "medium", or "heavy"
+                auto: Preset budget - "light" (6 candidates), "medium" (12), or "heavy" (18)
                 max_full_evals: Maximum number of full validation evaluations
                 max_metric_calls: Maximum total metric calls
 
@@ -302,22 +310,34 @@ class GEPA(Teleprompter):
 
     def auto_budget(
         self,
-        trainset: list["Example"],
-        valset: list["Example"] | None = None,
+        num_preds: int,
+        valset_size: int,
+        minibatch_size: int = 25,
+        full_eval_steps: int = 5,
     ) -> int:
-        """Calculate max_metric_calls from auto preset.
+        """Calculate max_metric_calls from auto preset using DSPy's exact formula.
 
-        The auto budget is calculated based on the number of predictors
-        in the program and dataset sizes. This matches DSPy's GEPA behavior.
+        This matches DSPy's GEPA.auto_budget() implementation. The budget accounts for:
+        1. Initial full evaluation on the default program
+        2. Up to 5 bootstrap trials per candidate
+        3. Minibatch evaluations during optimization
+        4. Periodic full evaluations
 
-        Auto presets:
-            - light: ~50 * num_predictors * max(len(trainset), len(valset))
-            - medium: ~100 * num_predictors * max(len(trainset), len(valset))
-            - heavy: ~200 * num_predictors * max(len(trainset), len(valset))
+        Auto presets determine num_candidates (n):
+            - light: n=6 candidates
+            - medium: n=12 candidates
+            - heavy: n=18 candidates
+
+        The num_trials is calculated as:
+            num_trials = max(2 * num_vars * log2(num_candidates), 1.5 * num_candidates)
+
+        Where num_vars = num_preds * 2 (for both instruction and few-shot variables).
 
         Args:
-            trainset: Training dataset
-            valset: Validation dataset (uses trainset if None)
+            num_preds: Number of predictors in the program
+            valset_size: Size of the validation set
+            minibatch_size: Size of minibatch for evaluations (default: 25)
+            full_eval_steps: Steps between full evaluations (default: 5)
 
         Returns:
             Calculated max_metric_calls budget
@@ -325,22 +345,31 @@ class GEPA(Teleprompter):
         if self.auto is None:
             raise ValueError("auto_budget requires auto preset to be set")
 
-        valset = valset or trainset
-        max_examples = max(len(trainset), len(valset))
+        num_candidates = AUTO_RUN_SETTINGS.get(self.auto, 12)
 
-        # Auto budget multipliers (matching DSPy's formula)
-        multipliers = {
-            "light": 50,
-            "medium": 100,
-            "heavy": 200,
-        }
+        # DSPy's formula for num_trials (matches MIPROv2._set_num_trials_from_num_candidates)
+        # num_vars accounts for both instruction and few-shot example variables
+        num_vars = num_preds * 2
+        num_trials = int(
+            max(2 * num_vars * math.log2(num_candidates), 1.5 * num_candidates)
+        )
 
-        multiplier = multipliers.get(self.auto, 100)
+        # Budget components (matching DSPy's GEPA.auto_budget):
+        # 1. Initial full evaluation on default program: V (valset_size)
+        # 2. Up to 5 trials for bootstrapping each candidate: num_candidates * 5
+        # 3. N minibatch evaluations: num_trials * minibatch_size
+        # 4. Periodic full evaluations: (num_trials + 1) // full_eval_steps + 1
+        # 5. Extra final full eval if num_trials < full_eval_steps: 1
 
-        # Note: The full calculation in DSPy also considers num_predictors
-        # For now we use a simplified version; the actual budget is calculated
-        # inside compile() when we have access to the student module
-        return multiplier * max_examples
+        budget = valset_size  # Initial full eval
+        budget += num_candidates * 5  # Bootstrap trials
+        budget += num_trials * minibatch_size  # Minibatch evals
+        budget += ((num_trials + 1) // full_eval_steps + 1) * valset_size  # Periodic full evals
+
+        if num_trials < full_eval_steps:
+            budget += valset_size  # Extra final full eval
+
+        return budget
 
     def compile(
         self,
@@ -392,11 +421,11 @@ class GEPA(Teleprompter):
         # Calculate budget if using auto preset
         effective_max_metric_calls = self.max_metric_calls
         if self.auto is not None:
-            # DSPy's auto budget formula
-            multipliers = {"light": 50, "medium": 100, "heavy": 200}
-            multiplier = multipliers.get(self.auto, 100)
-            max_examples = max(len(trainset), len(valset))
-            effective_max_metric_calls = multiplier * num_predictors * max_examples
+            # Use DSPy's exact auto_budget formula
+            effective_max_metric_calls = self.auto_budget(
+                num_preds=num_predictors,
+                valset_size=len(valset),
+            )
 
         elif self.max_full_evals is not None:
             # Convert max_full_evals to max_metric_calls
