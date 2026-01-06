@@ -78,7 +78,7 @@ print(result.answer)
 
 | Parameter | Description |
 |-----------|-------------|
-| `auto` | `"light"`, `"medium"`, or `"heavy"` - automatic budget based on dataset size |
+| `auto` | `"light"` (6 candidates), `"medium"` (12), or `"heavy"` (18) - matches DSPy's GEPA |
 | `max_full_evals` | Maximum number of full validation evaluations |
 | `max_metric_calls` | Maximum total metric calls |
 
