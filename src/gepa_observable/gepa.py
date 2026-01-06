@@ -278,8 +278,10 @@ class GEPA(Teleprompter):
                                 "args": {},
                             }
                             for arg_name, arg_field in tool.args.items():
-                                tool_info["args"][arg_name] = arg_field.json_schema_extra.get(
-                                    "desc", ""
+                                # json_schema_extra may be None if no extra metadata was provided
+                                extra = arg_field.json_schema_extra
+                                tool_info["args"][arg_name] = (
+                                    extra.get("desc", "") if extra else ""
                                 )
                             tool_config["tools"].append(tool_info)
 
