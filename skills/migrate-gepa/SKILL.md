@@ -86,7 +86,7 @@ class MyObserver:
         print(f"Iteration {event.iteration}, parent score: {event.parent_score:.2%}")
 
     def on_reflection(self, event):
-        for comp, text in event.proposed_instructions.items():
+        for comp, text in event.proposed_texts.items():
             print(f"Proposing for {comp}: {text[:100]}...")
 
     def on_valset_eval(self, event):
@@ -94,7 +94,7 @@ class MyObserver:
             print(f"NEW BEST: {event.valset_score:.2%}")
 
     def on_optimization_complete(self, event):
-        print(f"Done! Best: {event.best_score:.2%} in {event.num_iterations} iters")
+        print(f"Done! Best: {event.best_score:.2%} in {event.total_iterations} iters")
 
 # Use with other observers - they all work together
 optimizer = GEPA(
