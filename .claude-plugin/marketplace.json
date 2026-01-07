@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "gepa-observable",
+  "description": "Observable GEPA optimizer for DSPy with migration tools and dashboard integration",
+  "owner": {
+    "name": "Raveesh Bhalla"
+  },
+  "plugins": [
+    {
+      "name": "gepa-observable-migration",
+      "description": "Migrate DSPy GEPA to gepa-observable for web dashboard monitoring, custom observers, and LM call logging",
+      "source": ".",
+      "category": "development",
+      "homepage": "https://github.com/raveeshbhalla/dspy-gepa-logger"
+    }
+  ]
+}

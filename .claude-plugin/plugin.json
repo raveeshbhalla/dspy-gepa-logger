@@ -1,0 +1,19 @@
+{
+  "name": "gepa-observable-migration",
+  "version": "1.0.0",
+  "description": "Migrate GEPA usage in DSPy from the original to gepa-observable for observability, dashboard monitoring, and custom callbacks",
+  "author": {
+    "name": "Raveesh Bhalla"
+  },
+  "repository": "https://github.com/raveeshbhalla/dspy-gepa-logger",
+  "license": "MIT",
+  "keywords": [
+    "dspy",
+    "gepa",
+    "observability",
+    "migration",
+    "dashboard",
+    "llm",
+    "prompt-optimization"
+  ]
+}
