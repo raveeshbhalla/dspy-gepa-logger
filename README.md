@@ -27,6 +27,31 @@ cd dspy-gepa-logger
 pip install -e .
 ```
 
+## Claude Code Plugin (Migration Helper)
+
+If you're using Claude Code, install our migration skill to get AI-assisted help migrating your existing DSPy GEPA code.
+
+### Quick Install
+
+```bash
+/plugin marketplace add raveeshbhalla/dspy-gepa-logger
+```
+
+Then select "Browse and install plugins" and install `gepa-observable-migration`.
+
+### What It Does
+
+Once installed, Claude Code will automatically help when you ask about:
+- Migrating from DSPy GEPA to gepa-observable
+- Adding observability to GEPA optimization
+- Setting up dashboard monitoring for GEPA
+- Creating custom observers
+
+Example prompts:
+- "Help me migrate my notebook from dspy.GEPA to gepa-observable"
+- "Add web dashboard logging to my GEPA optimization script"
+- "Set up custom observers for my GEPA run"
+
 ## Quick Start
 
 ```python
