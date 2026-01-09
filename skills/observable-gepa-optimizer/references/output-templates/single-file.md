@@ -267,7 +267,9 @@ def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
     try:
         gold_amt = float(gold.purchase_amount)
         pred_amt = float(getattr(pred, 'purchase_amount', 0))
-        if abs(gold_amt - pred_amt) / gold_amt < 0.01:
+        if gold_amt == 0:
+            scores['purchase_amount'] = 1.0 if pred_amt == 0 else 0.0
+        elif abs(gold_amt - pred_amt) / gold_amt < 0.01:
             scores['purchase_amount'] = 1.0
         else:
             scores['purchase_amount'] = 0.0

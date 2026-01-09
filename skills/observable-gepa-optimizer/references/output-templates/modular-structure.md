@@ -98,7 +98,7 @@ import pandas as pd
 from pathlib import Path
 import dspy
 
-from config import DATA_PATH, {FILE_DIR_IMPORT}TRAIN_VAL_SPLIT
+from config import DATA_PATH, TRAIN_VAL_SPLIT  # Add FILE_DIR if using files
 from utils import load_file_for_llm
 
 
