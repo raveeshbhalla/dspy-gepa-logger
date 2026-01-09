@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PromptDiff } from "@/components/diff";
 
 type PromptComparisonProps = {
   seedPrompt: Record<string, string>;
@@ -45,64 +46,22 @@ export function PromptComparison({
         <CardTitle className="text-lg">Prompt Comparison</CardTitle>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="side-by-side">
+        <Tabs defaultValue="diff">
           <TabsList className="mb-4">
-            <TabsTrigger value="side-by-side">Side by Side</TabsTrigger>
+            <TabsTrigger value="diff">Diff View</TabsTrigger>
             <TabsTrigger value="original">Original (#{seedCandidateIdx})</TabsTrigger>
             <TabsTrigger value="optimized">
               Optimized{bestCandidateIdx != null ? ` (#${bestCandidateIdx})` : ""}
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="side-by-side">
-            <div className="space-y-4">
-              {allKeys.map((key) => {
-                const seedVal = seedPrompt[key] || "";
-                const bestVal = bestPrompt[key] || "";
-                const changed = seedVal !== bestVal;
-
-                return (
-                  <div key={key} className="space-y-2">
-                    <h4 className="text-sm font-medium text-foreground">
-                      {key}
-                      {changed && (
-                        <span className="ml-2 text-xs text-yellow-500">Changed</span>
-                      )}
-                    </h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div
-                        className={`p-3 rounded-lg text-sm ${
-                          changed
-                            ? "bg-red-500/10 border border-red-500/20"
-                            : "bg-muted"
-                        }`}
-                      >
-                        <p className="text-xs text-muted-foreground mb-1">
-                          Original
-                        </p>
-                        <pre className="whitespace-pre-wrap font-mono text-xs">
-                          {seedVal || "(empty)"}
-                        </pre>
-                      </div>
-                      <div
-                        className={`p-3 rounded-lg text-sm ${
-                          changed
-                            ? "bg-green-500/10 border border-green-500/20"
-                            : "bg-muted"
-                        }`}
-                      >
-                        <p className="text-xs text-muted-foreground mb-1">
-                          Optimized
-                        </p>
-                        <pre className="whitespace-pre-wrap font-mono text-xs">
-                          {bestVal || "(empty)"}
-                        </pre>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          <TabsContent value="diff">
+            <PromptDiff
+              oldPrompt={seedPrompt}
+              newPrompt={bestPrompt}
+              oldLabel={`Original (#${seedCandidateIdx})`}
+              newLabel={`Optimized${bestCandidateIdx != null ? ` (#${bestCandidateIdx})` : ""}`}
+            />
           </TabsContent>
 
           <TabsContent value="original">
