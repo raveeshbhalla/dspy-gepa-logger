@@ -76,7 +76,7 @@ export function UnifiedDiff({
                     {prefix}
                   </td>
                   <td className="whitespace-pre-wrap break-all py-0.5 pr-3 align-top">
-                    {line.segments ? (
+                    {line.segments && line.segments.length > 0 && (isDelete || isInsert) ? (
                       renderSegments(line.segments, line.operation as "delete" | "insert")
                     ) : (
                       line.content

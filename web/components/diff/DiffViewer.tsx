@@ -18,12 +18,12 @@ export function DiffViewer({
 }: DiffViewerProps) {
   const [mode, setMode] = useState<DiffViewMode>(defaultMode);
 
-  const diff = useMemo(
-    () => computeLineDiff(oldText, newText),
-    [oldText, newText]
-  );
-
   const changed = hasChanges(oldText, newText);
+
+  const diff = useMemo(
+    () => (changed ? computeLineDiff(oldText, newText) : []),
+    [oldText, newText, changed]
+  );
 
   if (!changed) {
     return (
@@ -38,6 +38,7 @@ export function DiffViewer({
       {/* Toggle */}
       <div className="flex justify-end gap-1">
         <button
+          type="button"
           onClick={() => setMode("side-by-side")}
           className={cn(
             "px-3 py-1 text-xs rounded-md transition-colors",
@@ -49,6 +50,7 @@ export function DiffViewer({
           Side by Side
         </button>
         <button
+          type="button"
           onClick={() => setMode("unified")}
           className={cn(
             "px-3 py-1 text-xs rounded-md transition-colors",

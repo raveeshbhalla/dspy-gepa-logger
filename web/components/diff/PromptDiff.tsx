@@ -16,7 +16,7 @@ export function PromptDiff({
   ];
 
   const hasAnyChanges = allKeys.some(
-    (key) => oldPrompt[key] !== newPrompt[key]
+    (key) => (oldPrompt[key] || "") !== (newPrompt[key] || "")
   );
 
   if (!hasAnyChanges) {
