@@ -274,7 +274,7 @@ def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
         else:
             scores['purchase_amount'] = 0.0
             feedback_parts.append(f"purchase_amount: expected {gold_amt}")
-    except:
+    except (ValueError, TypeError):
         scores['purchase_amount'] = 0.0
         feedback_parts.append("purchase_amount: parse error")
 

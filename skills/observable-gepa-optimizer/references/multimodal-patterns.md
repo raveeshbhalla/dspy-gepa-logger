@@ -130,8 +130,12 @@ def load_data_with_files(csv_path: str, file_dir: str, file_pattern: str = "{id}
             print(f"Warning: File not found: {file_path}")
             continue
 
-        # Load file content
-        file_content = load_pdf_for_llm(str(file_path))
+        # Load file content with error handling
+        try:
+            file_content = load_pdf_for_llm(str(file_path))
+        except (IOError, OSError) as e:
+            print(f"Warning: Failed to load file {file_path}: {e}")
+            continue
 
         # Create example with file content as input
         # Ground truth comes from CSV columns
@@ -381,7 +385,7 @@ def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
             score += 0.33
         else:
             feedback.append(f"amount: expected {gold_amt}, got {pred_amt}")
-    except:
+    except (ValueError, TypeError):
         feedback.append("amount: parse error")
 
     # Check names (fuzzy)

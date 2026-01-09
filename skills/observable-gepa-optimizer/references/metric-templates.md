@@ -155,11 +155,19 @@ For comparing lists of names where order doesn't matter and minor typos are acce
 ```python
 from difflib import SequenceMatcher
 
-def fuzzy_name_match(gold_names: str, pred_names: str) -> float:
+def fuzzy_name_match(gold_names: str | None, pred_names: str | None) -> float:
     """
     Compare comma-separated name lists with fuzzy matching.
     Order-independent and tolerant of minor differences.
+
+    Handles None values gracefully.
     """
+    # Handle None inputs explicitly
+    if gold_names is None:
+        gold_names = ""
+    if pred_names is None:
+        pred_names = ""
+
     # Parse into sets of normalized names
     gold_set = set(n.strip().lower() for n in str(gold_names).split(',') if n.strip())
     pred_set = set(n.strip().lower() for n in str(pred_names).split(',') if n.strip())
@@ -192,26 +200,76 @@ def fuzzy_name_match(gold_names: str, pred_names: str) -> float:
 Use an LLM to evaluate output quality for subjective tasks.
 
 ```python
+# Initialize judge model once at module level (outside the metric function)
+# This avoids recreating the LM client on every metric call
+JUDGE_LM = dspy.LM("openai/gpt-4o")
+
+
+class JudgeSignature(dspy.Signature):
+    """Evaluate if the prediction correctly matches the expected output."""
+
+    task_description: str = dspy.InputField(desc="What the task is trying to do")
+    expected_output: str = dspy.InputField(desc="The expected/gold output")
+    actual_output: str = dspy.InputField(desc="The model's actual output")
+
+    score: float = dspy.OutputField(desc="Score from 0.0 (completely wrong) to 1.0 (perfect)")
+    reasoning: str = dspy.OutputField(desc="Brief explanation for the score")
+
+
+# Create judge program once at module level
+JUDGE_PROGRAM = dspy.ChainOfThought(JudgeSignature)
+
+
 def llm_judge_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
     """Use an LLM to evaluate the quality of the prediction."""
 
-    # Use a capable judge model
-    judge_lm = dspy.LM("openai/gpt-4o")
+    with dspy.settings.context(lm=JUDGE_LM):
+        result = JUDGE_PROGRAM(
+            task_description="Extract transaction details from real estate documents",
+            expected_output=str(gold),
+            actual_output=str(pred),
+        )
 
-    class JudgeSignature(dspy.Signature):
-        """Evaluate if the prediction correctly matches the expected output."""
+    return dspy.Prediction(
+        score=float(result.score),
+        feedback=result.reasoning
+    )
+```
 
-        task_description: str = dspy.InputField(desc="What the task is trying to do")
-        expected_output: str = dspy.InputField(desc="The expected/gold output")
-        actual_output: str = dspy.InputField(desc="The model's actual output")
+### Alternative: Lazy Initialization
 
-        score: float = dspy.OutputField(desc="Score from 0.0 (completely wrong) to 1.0 (perfect)")
-        reasoning: str = dspy.OutputField(desc="Brief explanation for the score")
+If you prefer not to initialize at import time:
 
-    judge = dspy.ChainOfThought(JudgeSignature)
+```python
+_judge_lm = None
+_judge_program = None
+
+
+def _get_judge():
+    global _judge_lm, _judge_program
+    if _judge_lm is None:
+        _judge_lm = dspy.LM("openai/gpt-4o")
+
+        class JudgeSignature(dspy.Signature):
+            """Evaluate if the prediction correctly matches the expected output."""
+
+            task_description: str = dspy.InputField(desc="What the task is trying to do")
+            expected_output: str = dspy.InputField(desc="The expected/gold output")
+            actual_output: str = dspy.InputField(desc="The model's actual output")
+
+            score: float = dspy.OutputField(desc="Score from 0.0 to 1.0")
+            reasoning: str = dspy.OutputField(desc="Brief explanation for the score")
+
+        _judge_program = dspy.ChainOfThought(JudgeSignature)
+    return _judge_lm, _judge_program
+
+
+def llm_judge_metric_lazy(gold, pred, trace=None, pred_name=None, pred_trace=None):
+    """Use an LLM to evaluate the quality of the prediction (lazy initialization)."""
+    judge_lm, judge_program = _get_judge()
 
     with dspy.settings.context(lm=judge_lm):
-        result = judge(
+        result = judge_program(
             task_description="Extract transaction details from real estate documents",
             expected_output=str(gold),
             actual_output=str(pred),

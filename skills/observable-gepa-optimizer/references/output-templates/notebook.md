@@ -383,7 +383,7 @@ def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
     try:
         g, p = float(gold.purchase_amount), float(getattr(pred, 'purchase_amount', 0))
         scores['amount'] = 1.0 if abs(g - p) / g < 0.01 else 0.0
-    except:
+    except (ValueError, TypeError):
         scores['amount'] = 0.0
 
     # Kind
