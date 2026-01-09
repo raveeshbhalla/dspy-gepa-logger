@@ -29,68 +29,146 @@ export function computeCharacterDiff(
 }
 
 /**
- * Compute line-by-line diff with inline character-level highlighting
+ * Compute line-by-line diff with inline character-level highlighting.
+ * Uses Myers' diff algorithm via diff-match-patch for character-level diff,
+ * then groups results by line. No unique line count limitations.
  */
 export function computeLineDiff(oldText: string, newText: string): LineDiff[] {
-  const oldLines = oldText.split("\n");
-  const newLines = newText.split("\n");
+  // Compute character-level diff
+  const charDiffs = dmp.diff_main(oldText, newText);
+  dmp.diff_cleanupSemantic(charDiffs);
 
-  // Use diff-match-patch for line-level diff
-  const lineArray: string[] = [];
-  const lineHash = new Map<string, number>();
-
-  function linesToChars(lines: string[]): string {
-    let chars = "";
-    for (const line of lines) {
-      let hash = lineHash.get(line);
-      if (hash === undefined) {
-        hash = lineArray.length;
-        lineArray.push(line);
-        lineHash.set(line, hash);
-      }
-      chars += String.fromCharCode(hash);
-    }
-    return chars;
-  }
-
-  const oldChars = linesToChars(oldLines);
-  const newChars = linesToChars(newLines);
-
-  const diffs = dmp.diff_main(oldChars, newChars, false);
-
+  // Process diffs and group by lines
   const result: LineDiff[] = [];
   let oldLineNum = 1;
   let newLineNum = 1;
 
-  for (const [op, chars] of diffs) {
-    const operation = toOperation(op);
+  // Current line buffers
+  let oldLineBuffer = "";
+  let newLineBuffer = "";
+  let oldSegments: DiffSegment[] = [];
+  let newSegments: DiffSegment[] = [];
 
-    for (let i = 0; i < chars.length; i++) {
-      const lineIndex = chars.charCodeAt(i);
-      const content = lineArray[lineIndex] || "";
+  // Track if we're in a modification (delete+insert on same logical line)
+  let pendingDelete: { content: string; segments: DiffSegment[] } | null = null;
+
+  for (const [op, text] of charDiffs) {
+    const operation = toOperation(op);
+    const lines = text.split("\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      const lineContent = lines[i];
+      const isLastPart = i === lines.length - 1;
 
       if (operation === "equal") {
-        result.push({
-          lineNumber: { old: oldLineNum, new: newLineNum },
-          operation: "equal",
-          content,
-        });
-        oldLineNum++;
-        newLineNum++;
+        // Flush any pending modifications
+        if (pendingDelete) {
+          result.push({
+            lineNumber: { old: oldLineNum, new: null },
+            operation: "delete",
+            content: pendingDelete.content,
+            segments: pendingDelete.segments.length > 0 ? pendingDelete.segments : undefined,
+          });
+          oldLineNum++;
+          pendingDelete = null;
+        }
+
+        oldLineBuffer += lineContent;
+        newLineBuffer += lineContent;
+
+        if (!isLastPart) {
+          // Hit a newline - flush the equal line
+          result.push({
+            lineNumber: { old: oldLineNum, new: newLineNum },
+            operation: "equal",
+            content: oldLineBuffer,
+          });
+          oldLineNum++;
+          newLineNum++;
+          oldLineBuffer = "";
+          newLineBuffer = "";
+        }
       } else if (operation === "delete") {
+        oldLineBuffer += lineContent;
+        oldSegments.push({ operation: "delete", text: lineContent });
+
+        if (!isLastPart) {
+          // Store as pending - might be paired with insert
+          pendingDelete = { content: oldLineBuffer, segments: [...oldSegments] };
+          oldLineBuffer = "";
+          oldSegments = [];
+        }
+      } else if (operation === "insert") {
+        newLineBuffer += lineContent;
+        newSegments.push({ operation: "insert", text: lineContent });
+
+        if (!isLastPart) {
+          if (pendingDelete) {
+            // Pair delete+insert as a modification
+            result.push({
+              lineNumber: { old: oldLineNum, new: null },
+              operation: "delete",
+              content: pendingDelete.content,
+              segments: pendingDelete.segments,
+            });
+            oldLineNum++;
+            result.push({
+              lineNumber: { old: null, new: newLineNum },
+              operation: "insert",
+              content: newLineBuffer,
+              segments: [...newSegments],
+            });
+            newLineNum++;
+            pendingDelete = null;
+          } else {
+            result.push({
+              lineNumber: { old: null, new: newLineNum },
+              operation: "insert",
+              content: newLineBuffer,
+              segments: newSegments.length > 0 ? [...newSegments] : undefined,
+            });
+            newLineNum++;
+          }
+          newLineBuffer = "";
+          newSegments = [];
+        }
+      }
+    }
+  }
+
+  // Flush remaining content
+  if (pendingDelete) {
+    result.push({
+      lineNumber: { old: oldLineNum, new: null },
+      operation: "delete",
+      content: pendingDelete.content,
+      segments: pendingDelete.segments.length > 0 ? pendingDelete.segments : undefined,
+    });
+    oldLineNum++;
+  }
+  if (oldLineBuffer || newLineBuffer) {
+    if (oldLineBuffer === newLineBuffer && oldLineBuffer !== "") {
+      result.push({
+        lineNumber: { old: oldLineNum, new: newLineNum },
+        operation: "equal",
+        content: oldLineBuffer,
+      });
+    } else {
+      if (oldLineBuffer) {
         result.push({
           lineNumber: { old: oldLineNum, new: null },
           operation: "delete",
-          content,
+          content: oldLineBuffer,
+          segments: oldSegments.length > 0 ? oldSegments : undefined,
         });
-        oldLineNum++;
-      } else if (operation === "insert") {
+      }
+      if (newLineBuffer) {
         result.push({
           lineNumber: { old: null, new: newLineNum },
           operation: "insert",
-          content,
+          content: newLineBuffer,
+          segments: newSegments.length > 0 ? newSegments : undefined,
         });
-        newLineNum++;
       }
     }
   }
