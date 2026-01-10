@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PerformanceComparisonTable, type Evaluation as FullEvaluation } from "./PerformanceComparisonTable";
+import { PromptDiff } from "@/components/diff";
 
 type Candidate = {
   candidateIdx: number;
@@ -351,11 +352,6 @@ export function LineageTab({
 
     if (!cand1 || !cand2) return null;
 
-    const allKeys = new Set([
-      ...Object.keys(cand1.content),
-      ...Object.keys(cand2.content),
-    ]);
-
     // Get scores for both candidates
     const valsetIds = new Set(valsetExampleIds || []);
     // Only use valset evaluations (seed_validation and valset phases)
@@ -470,60 +466,12 @@ export function LineageTab({
           {/* Prompt comparison */}
           <div>
             <h4 className="font-medium mb-3">Prompt Comparison</h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <h5 className="text-sm text-muted-foreground mb-2">
-                  Candidate #{idx1}
-                </h5>
-                <div className="space-y-2">
-                  {Array.from(allKeys).map((key) => {
-                    const value = cand1.content[key] || "(empty)";
-                    const changed = cand1.content[key] !== cand2.content[key];
-                    return (
-                      <div
-                        key={key}
-                        className={`p-2 rounded text-sm ${
-                          changed
-                            ? "bg-red-500/10 border border-red-500/20"
-                            : "bg-muted/50"
-                        }`}
-                      >
-                        <span className="font-medium text-muted-foreground">
-                          {key}:
-                        </span>
-                        <p className="whitespace-pre-wrap mt-1">{value}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              <div>
-                <h5 className="text-sm text-muted-foreground mb-2">
-                  Candidate #{idx2}
-                </h5>
-                <div className="space-y-2">
-                  {Array.from(allKeys).map((key) => {
-                    const value = cand2.content[key] || "(empty)";
-                    const changed = cand1.content[key] !== cand2.content[key];
-                    return (
-                      <div
-                        key={key}
-                        className={`p-2 rounded text-sm ${
-                          changed
-                            ? "bg-green-500/10 border border-green-500/20"
-                            : "bg-muted/50"
-                        }`}
-                      >
-                        <span className="font-medium text-muted-foreground">
-                          {key}:
-                        </span>
-                        <p className="whitespace-pre-wrap mt-1">{value}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+            <PromptDiff
+              oldPrompt={cand1.content}
+              newPrompt={cand2.content}
+              oldLabel={`Candidate #${idx1}`}
+              newLabel={`Candidate #${idx2}`}
+            />
           </div>
 
           {/* Performance Comparison Table */}

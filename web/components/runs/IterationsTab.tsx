@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PerformanceComparisonTable, type Evaluation as FullEvaluation } from "./PerformanceComparisonTable";
+import { PromptDiff } from "@/components/diff";
 
 type Iteration = {
   iterationNumber: number;
@@ -256,69 +257,6 @@ export function IterationsTab({
     });
   }
 
-  function renderPromptComparison(
-    parentPrompt: Record<string, string> | undefined,
-    childPrompt: Record<string, string> | undefined,
-    parentLabel: string,
-    childLabel: string
-  ) {
-    if (!parentPrompt && !childPrompt) return null;
-
-    const allKeys = new Set([
-      ...Object.keys(parentPrompt || {}),
-      ...Object.keys(childPrompt || {}),
-    ]);
-
-    return (
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <h4 className="font-medium text-sm mb-2 text-muted-foreground">
-            {parentLabel}
-          </h4>
-          <div className="space-y-2">
-            {Array.from(allKeys).map((key) => {
-              const value = parentPrompt?.[key] || "(empty)";
-              const changed = parentPrompt?.[key] !== childPrompt?.[key];
-              return (
-                <div
-                  key={key}
-                  className={`p-2 rounded text-sm ${
-                    changed ? "bg-red-500/10 border border-red-500/20" : "bg-muted/50"
-                  }`}
-                >
-                  <span className="font-medium text-muted-foreground">{key}:</span>
-                  <p className="whitespace-pre-wrap mt-1">{value}</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div>
-          <h4 className="font-medium text-sm mb-2 text-muted-foreground">
-            {childLabel}
-          </h4>
-          <div className="space-y-2">
-            {Array.from(allKeys).map((key) => {
-              const value = childPrompt?.[key] || "(empty)";
-              const changed = parentPrompt?.[key] !== childPrompt?.[key];
-              return (
-                <div
-                  key={key}
-                  className={`p-2 rounded text-sm ${
-                    changed ? "bg-green-500/10 border border-green-500/20" : "bg-muted/50"
-                  }`}
-                >
-                  <span className="font-medium text-muted-foreground">{key}:</span>
-                  <p className="whitespace-pre-wrap mt-1">{value}</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   function renderLmCallDetails(call: LmCall) {
     return (
       <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
@@ -461,12 +399,12 @@ export function IterationsTab({
                                   </span>
                                 )}
                               </h4>
-                              {renderPromptComparison(
-                                parent?.content,
-                                child.content,
-                                `Parent (#${parent?.candidateIdx ?? "?"})`,
-                                `Child (#${child.candidateIdx})`
-                              )}
+                              <PromptDiff
+                                oldPrompt={parent?.content || {}}
+                                newPrompt={child.content}
+                                oldLabel={`Parent (#${parent?.candidateIdx ?? "?"})`}
+                                newLabel={`Child (#${child.candidateIdx})`}
+                              />
                             </div>
                           );
                         })}
@@ -581,12 +519,12 @@ export function IterationsTab({
                                   {" "}(rejected - mutated from #{parentCandidate.candidateIdx})
                                 </span>
                               </h4>
-                              {renderPromptComparison(
-                                parentCandidate.content,
-                                proposedContent,
-                                `Parent (#${parentCandidate.candidateIdx})`,
-                                "Proposed (rejected)"
-                              )}
+                              <PromptDiff
+                                oldPrompt={parentCandidate.content}
+                                newPrompt={proposedContent}
+                                oldLabel={`Parent (#${parentCandidate.candidateIdx})`}
+                                newLabel="Proposed (rejected)"
+                              />
                             </div>
                           ))}
                         </div>
