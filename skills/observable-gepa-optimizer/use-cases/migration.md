@@ -1,6 +1,6 @@
 ---
-name: observable-gepa-migration
-description: Migrate DSPy GEPA usage in DSPy from the original to gepa-observable. This makes it possible for teams to clearly review each iteration and the lineage to understand how their prompt is evolving. The repository offers a web dashboard for monitoring, but requires a custom GEPA fork that provides custom observers and LM call logging. Use when developers want to add observability to GEPA optimization.
+name: migration
+description: Migrate existing DSPy GEPA code to gepa-observable for observability features
 ---
 
 # Migrate DSPy GEPA to gepa-observable
@@ -13,7 +13,7 @@ real-time dashboard, custom observer callbacks, and LM call capture working toge
 ### Step 1: Install gepa-observable
 
 ```bash
-pip install dspy-gepa-logger
+pip install dspy-gepa-logger --pre
 ```
 
 ### Step 2: Change Import
@@ -110,7 +110,7 @@ optimizer = GEPA(
 
 ### For Notebooks
 
-1. [ ] Install: `pip install dspy-gepa-logger`
+1. [ ] Install: `pip install dspy-gepa-logger --pre`
 2. [ ] Change import: `from gepa_observable import GEPA`
 3. [ ] Add `server_url` for dashboard
 4. [ ] Add custom observers if needed
@@ -118,7 +118,7 @@ optimizer = GEPA(
 
 ### For Scripts
 
-1. [ ] Install: `pip install dspy-gepa-logger`
+1. [ ] Install: `pip install dspy-gepa-logger --pre`
 2. [ ] Find all `from dspy.teleprompt import GEPA`
 3. [ ] Replace import
 4. [ ] Add observability parameters to GEPA constructor
@@ -126,5 +126,5 @@ optimizer = GEPA(
 
 ## References
 
-- `references/api-reference.md` - Complete parameter docs, observer protocol, all event types
-- `references/examples.md` - Full before/after code examples
+- `../references/api-reference.md` - Complete parameter docs, observer protocol, all event types
+- `../references/migration-examples.md` - Full before/after code examples

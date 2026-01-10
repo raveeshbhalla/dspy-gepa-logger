@@ -1,14 +1,14 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "gepa-observable",
-  "description": "Observable GEPA optimizer for DSPy with migration tools and dashboard integration",
+  "name": "observable-gepa-optimizer",
+  "description": "Build and optimize DSPy programs with observability - migrate existing code or create from scratch with labelled datasets",
   "owner": {
     "name": "Raveesh Bhalla"
   },
   "plugins": [
     {
-      "name": "gepa-observable-migration",
-      "description": "Migrate DSPy GEPA to gepa-observable for web dashboard monitoring, custom observers, and LM call logging",
+      "name": "observable-gepa-optimizer",
+      "description": "Build and optimize DSPy programs with gepa-observable. Migrate existing GEPA code or create optimized programs from labelled datasets with dashboard monitoring.",
       "source": ".",
       "category": "development",
       "homepage": "https://github.com/raveeshbhalla/dspy-gepa-logger"
