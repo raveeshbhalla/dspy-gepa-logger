@@ -63,7 +63,7 @@ class DSPyLMLogger(BaseCallback):
         dspy.configure(callbacks=[lm_logger])
 
         # Or pass to LM directly
-        lm = dspy.LM("openai/gpt-4o-mini", callbacks=[lm_logger])
+        lm = dspy.LM("openai/gpt-5-mini", callbacks=[lm_logger])
 
         # After optimization:
         for call in lm_logger.calls:
@@ -87,9 +87,7 @@ class DSPyLMLogger(BaseCallback):
         self._call_counter: int = 0
         self._on_call_complete = on_call_complete
 
-    def on_lm_start(
-        self, call_id: str, instance: Any, inputs: dict[str, Any]
-    ) -> None:
+    def on_lm_start(self, call_id: str, instance: Any, inputs: dict[str, Any]) -> None:
         """Called by DSPy when an LM call starts.
 
         Args:
@@ -164,9 +162,7 @@ class DSPyLMLogger(BaseCallback):
             except Exception:
                 pass  # Don't let callback errors affect normal operation
 
-    def on_lm_error(
-        self, call_id: str, instance: Any, error: Exception
-    ) -> None:
+    def on_lm_error(self, call_id: str, instance: Any, error: Exception) -> None:
         """Called by DSPy when an LM call fails (legacy method).
 
         Args:
@@ -241,10 +237,7 @@ class DSPyLMLogger(BaseCallback):
 
         Includes calls with phase 'eval', 'validation', or 'minibatch'.
         """
-        return [
-            c for c in self.calls
-            if c.phase in ("eval", "validation", "minibatch")
-        ]
+        return [c for c in self.calls if c.phase in ("eval", "validation", "minibatch")]
 
     def get_untagged_calls(self) -> list[LMCall]:
         """Get LM calls that weren't tagged with a phase.
@@ -280,9 +273,7 @@ class DSPyLMLogger(BaseCallback):
         calls_by_iteration: dict[int, int] = {}
         for call in self.calls:
             if call.iteration is not None:
-                calls_by_iteration[call.iteration] = (
-                    calls_by_iteration.get(call.iteration, 0) + 1
-                )
+                calls_by_iteration[call.iteration] = calls_by_iteration.get(call.iteration, 0) + 1
 
         # Duration stats
         total_duration = sum(c.duration_ms for c in self.calls)

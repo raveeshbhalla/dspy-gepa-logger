@@ -13,7 +13,7 @@ import dspy
 from dspy.teleprompt import GEPA
 
 # Configure DSPy
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5-mini")
 dspy.configure(lm=lm)
 
 # Define program
@@ -42,7 +42,7 @@ import dspy
 from gepa_observable import GEPA  # <-- Only this line changes!
 
 # Configure DSPy
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5-mini")
 dspy.configure(lm=lm)
 
 # Define program
@@ -72,7 +72,7 @@ Add real-time web dashboard monitoring with a single parameter.
 import dspy
 from gepa_observable import GEPA
 
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5-mini")
 dspy.configure(lm=lm)
 
 program = dspy.ChainOfThought(QA)
@@ -95,7 +95,7 @@ Enable all observability features for complete visibility.
 import dspy
 from gepa_observable import GEPA
 
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5-mini")
 dspy.configure(lm=lm)
 
 program = dspy.ChainOfThought(QA)
@@ -201,7 +201,7 @@ import dspy
 ### Cell 2: Configuration (NO CHANGE)
 
 ```python
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5-mini")
 dspy.configure(lm=lm)
 ```
 
@@ -278,7 +278,7 @@ from dspy.teleprompt import GEPA
 
 def main():
     # Setup
-    lm = dspy.LM("openai/gpt-4o-mini")
+    lm = dspy.LM("openai/gpt-5-mini")
     dspy.configure(lm=lm)
 
     # Program
@@ -318,7 +318,7 @@ from gepa_observable import GEPA  # <-- Changed import
 
 def main():
     # Setup
-    lm = dspy.LM("openai/gpt-4o-mini")
+    lm = dspy.LM("openai/gpt-5-mini")
     dspy.configure(lm=lm)
 
     # Program
