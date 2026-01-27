@@ -1,11 +1,27 @@
 ---
 name: gepa-demo
-description: Guide new or experienced users to run a GEPA prompt-optimization demo with gepa-observable and the web dashboard. Use when a user is interested in determining the value of prompt optimization, and has CSV/JSON/JSONL data. We map their data to DSPy Examples, define a DSPy Signatures & Module, help them establish a metric (rule-based or LLM judge with feedback), and finally split their dataset and create an optimizationscript for them.
+description: Guide users who want to optimize their LLM prompts. We will interact with them, understanding their datasets and grader requirements, and finally writing DSPy code to optimize their prompt (using a custom implementation of the GEPA algorithm). 
 ---
 
-# GEPA Demo Onboarding
+# What is prompt optimization?
 
-Deliver a working end-to-end demo for a user dataset with minimal DSPy knowledge.
+Prompt optimization is the process of improving the quality of prompts used in language models. It is often done manually, but increasingly their are frameworks (such as DSPy) being used to use LLMs to do this.
+
+In essence, the process involves the user providing a dataset and a grader or reward model to judge an LLM's output. A prompt's performance on the dataset is measured, the gaps in in its performance identified, and a new prompt is then proposed and tested. This runs in a loop until an end state is reached.
+
+# What is GEPA?
+
+GEPA (which stands for GEnetic PAreto) is a prompt optimization algorithm that follows the process above. It is increasingly a popular approach to prompt optimization, and utilizes two key strategic choices compared to other algorithms:
+1. **Text Feedback:** most prompt optimization algorithms and RL simply use a scalar reward. GEPA however also uses textual feedback, including log traces, which can be used to identify the root cause of issues in a prompt. This makes it particularly well suitable for LLM as Judges, which may not be well calibrated from a score perspective but can provide high quality text feedback identifying what needs to be improved.
+2. **Pareto Frontiers:** GEPA does not simply select the best overall prompt based on score, but checks for which prompt dominates other candidate prompts on most test cases in the validation dataset. Through this, you are more likely to find a prompt that performs reliably on a wider variety of cases, rather than one that might simply spike on some scenarios but underperform on others.
+
+More can be read about GEPA on [this Github repo](https://github.com/gepa-ai/gepa) if needed.
+
+# The goal for this skill
+
+Help users improve their prompts using our [custom implementation of GEPA](https://github.com/raveeshbhalla/dspy-gepa-logger). Ask them for a dataset and create a grader for them (if they don't already have one), then optimize the prompt.
+
+Our custom GEPA implementation forks the original library to provide observability into its run. The Github repo also packages a webserver which is used to visualize the process.
 
 ## Workflow (follow in order)
 
@@ -68,13 +84,13 @@ Deliver a working end-to-end demo for a user dataset with minimal DSPy knowledge
 - Choose a simple `dspy.Module` (e.g., `ChainOfThought` or `Predict`).
 - See `references/data-mapping.md` for patterns.
 
-7) Create the metric with feedback
-- Prefer rule-based metrics when ground truth is clean.
+7) Create a grader that can be used as the "metric with feedback" for the GEPA run
+- Check if the dataset provided has any "expected" columns.
+  - If not, ask the user to provide some context for the rubric to be used- Prefer rule-based metrics when ground truth is clean.
 - Otherwise use an LLM judge with strong feedback text.
 - Metric must return `dspy.Prediction(score=float, feedback=str)`.
 - For LLM judges, define a DSPy `Signature` (e.g., `JudgeSig`) and call
   `dspy.ChainOfThought(JudgeSig)` to get structured outputs
-- Keep a rule-based fallback if judge output is empty/unusable.
 - See `references/metrics.md` for templates.
 
 8) Split dataset (train/val/test)
