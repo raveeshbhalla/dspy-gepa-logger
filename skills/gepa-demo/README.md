@@ -19,7 +19,14 @@ Once the skill is installed, simply launch the coding agent of your choice in th
 - **Claude Code:** /gepa-demo
 - **Codex:** $gepa-demo
 
-The coding agent will then read the skill and guide you through the rest of the process.
+The coding agent will then read the skill and guide you through the rest of the process:
+1. **Dataset:** it'll ask you to point to the dataset you want to use, including asking you questions about which columns to use as inputs, expected outputs, etc
+2. **Models:** which models to use as the "Task LM" (i.e., which one you intend to use in production) and "Reflective LM" (i.e. which model you intend to use to improve the prompt). Typically, it's good to use a stronger model as the reflective LM.
+3. **Budget:** how much budget you want to provide to the optimization process (in terms of number of iterations). Recommendation getting started is to just go with the default of "auto=light".
+4. **API Key:** it'll create the DSPy code for you, then ask you to add your model provider API key to the .env.local file it has made. It'll then run a smoke test of the code for you.
+5. **Server:** once the smoke test is complete, it'll finalize the optimization code and ask you whether or not you want to use a web server for observability. Recommendation is yes – details below. For that, it'll just set up the web server, including installing dependencies, setting up the database, and then get started.
+
+It'll the run the process, and you can observe it in the observability dashboard in your web brwoser.
 
 ## Observability
 
