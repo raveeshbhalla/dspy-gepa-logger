@@ -33,5 +33,5 @@ The following screenshots demo the capabilities of the observability tooling we'
 
 |Tab|Description|Screenshot|
 |---|----|---|
-|Overview|This section allows you to see a comparison of the original seed prompt and the optimal prompt. You can see the diff of the two prompts, as well as which examples did the optimal prompt improve or regress on.|![image](/assets/images/overview.png)|
-|Lineage|This Section shows you the entire evolution of the pareto frontier candidates – you can see which candidate emerged from which parent, and can select any two candidates to compare them side by side|![image](/assets/images/lineage.png)|
+|Overview|This section allows you to see a comparison of the original seed prompt and the optimal prompt. You can see the diff of the two prompts, as well as which examples did the optimal prompt improve or regress on.|![image](assets/images/overview.png)|
+|Lineage|This Section shows you the entire evolution of the pareto frontier candidates – you can see which candidate emerged from which parent, and can select any two candidates to compare them side by side|![image](assets/images/lineage.png)|
