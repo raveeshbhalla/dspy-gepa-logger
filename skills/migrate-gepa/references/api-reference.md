@@ -17,7 +17,7 @@ Complete reference for gepa-observable parameters, observer protocol, and event 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `metric` | Required | 5-argument GEPA feedback metric function |
-| `reflection_lm` | `None` | Language model for reflection (recommend strong model like gpt-4o) |
+| `reflection_lm` | `None` | Language model for reflection (recommend strong model like gpt-5.2) |
 | `reflection_minibatch_size` | `3` | Examples per reflection step |
 | `candidate_selection_strategy` | `"pareto"` | `"pareto"` or `"current_best"` |
 | `skip_perfect_score` | `True` | Skip reflection if perfect score achieved |
@@ -256,7 +256,7 @@ observer.set_examples(train_data, val_data)
 # Get LM logger for manual DSPy integration
 lm_logger = observer.get_lm_logger()
 if lm_logger:
-    lm = dspy.LM("openai/gpt-4o", callbacks=[lm_logger])
+    lm = dspy.LM("openai/gpt-5.2", callbacks=[lm_logger])
 ```
 
 ## Observer Composition

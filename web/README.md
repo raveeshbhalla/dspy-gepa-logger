@@ -69,7 +69,7 @@ server_observer.start_run(seed_candidate)
 
 # Optional: Capture LM calls
 lm_logger = DSPyLMLogger(on_call_complete=server_observer.on_lm_call)
-lm = dspy.LM("openai/gpt-4o-mini", callbacks=[lm_logger])
+lm = dspy.LM("openai/gpt-5-mini", callbacks=[lm_logger])
 
 # Run optimization with observers
 result = optimize(

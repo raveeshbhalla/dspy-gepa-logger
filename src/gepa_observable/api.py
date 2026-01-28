@@ -11,10 +11,15 @@ from typing import Any, Literal, cast
 from gepa.adapters.default_adapter.default_adapter import ChatCompletionCallable, DefaultAdapter
 from gepa.core.adapter import DataInst, GEPAAdapter, RolloutOutput, Trajectory
 from gepa.core.data_loader import DataId, DataLoader, ensure_loader
+from gepa.core.result import GEPAResult
 from gepa.logging.experiment_tracker import create_experiment_tracker
 from gepa.logging.logger import LoggerProtocol, StdOutLogger
 from gepa.proposer.merge import MergeProposer
-from gepa.proposer.reflective_mutation.base import CandidateSelector, LanguageModel, ReflectionComponentSelector
+from gepa.proposer.reflective_mutation.base import (
+    CandidateSelector,
+    LanguageModel,
+    ReflectionComponentSelector,
+)
 from gepa.strategies.batch_sampler import BatchSampler, EpochShuffledBatchSampler
 from gepa.strategies.candidate_selector import (
     CurrentBestCandidateSelector,
@@ -27,13 +32,15 @@ from gepa.strategies.component_selector import (
 )
 from gepa.strategies.eval_policy import EvaluationPolicy, FullEvaluationPolicy
 from gepa.utils import FileStopper, StopperProtocol
-from gepa.core.result import GEPAResult
+
+from gepa_observable._lm_integration import auto_register_lm_logger, warn_lm_logger_not_registered
 
 # Local imports for modified modules
 from gepa_observable.core.engine import GEPAEngine
-from gepa_observable.proposer.reflective_mutation.reflective_mutation import ReflectiveMutationProposer
 from gepa_observable.observers import GEPAObserver, LoggingObserver, ObserverManager, ServerObserver
-from gepa_observable._lm_integration import auto_register_lm_logger, warn_lm_logger_not_registered
+from gepa_observable.proposer.reflective_mutation.reflective_mutation import (
+    ReflectiveMutationProposer,
+)
 
 
 def optimize(
@@ -44,7 +51,8 @@ def optimize(
     task_lm: str | ChatCompletionCallable | None = None,
     # Reflection-based configuration
     reflection_lm: LanguageModel | str | None = None,
-    candidate_selection_strategy: CandidateSelector | Literal["pareto", "current_best", "epsilon_greedy"] = "pareto",
+    candidate_selection_strategy: CandidateSelector
+    | Literal["pareto", "current_best", "epsilon_greedy"] = "pareto",
     skip_perfect_score: bool = True,
     batch_sampler: BatchSampler | Literal["epoch_shuffled"] = "epoch_shuffled",
     reflection_minibatch_size: int | None = None,
@@ -100,7 +108,7 @@ def optimize(
             trainset=train,
             valset=val,
             adapter=adapter,
-            reflection_lm="openai/gpt-4o",
+            reflection_lm="openai/gpt-5.2",
             max_metric_calls=100,
             server_url="http://localhost:3000",  # Enables dashboard
         )
@@ -233,7 +241,9 @@ def optimize(
         reflection_lm_name = reflection_lm
 
         def _reflection_lm(prompt: str) -> str:
-            completion = litellm.completion(model=reflection_lm_name, messages=[{"role": "user", "content": prompt}])
+            completion = litellm.completion(
+                model=reflection_lm_name, messages=[{"role": "user", "content": prompt}]
+            )
             return completion.choices[0].message.content  # type: ignore
 
         reflection_lm = _reflection_lm
@@ -287,7 +297,9 @@ def optimize(
         module_selector_instance = module_selector
 
     if batch_sampler == "epoch_shuffled":
-        batch_sampler = EpochShuffledBatchSampler(minibatch_size=reflection_minibatch_size or 3, rng=rng)
+        batch_sampler = EpochShuffledBatchSampler(
+            minibatch_size=reflection_minibatch_size or 3, rng=rng
+        )
     else:
         assert reflection_minibatch_size is None, (
             "reflection_minibatch_size only accepted if batch_sampler is 'epoch_shuffled'"
@@ -303,7 +315,9 @@ def optimize(
     )
 
     if reflection_prompt_template is not None:
-        assert not (adapter is not None and getattr(adapter, "propose_new_texts", None) is not None), (
+        assert not (
+            adapter is not None and getattr(adapter, "propose_new_texts", None) is not None
+        ), (
             f"Adapter {adapter!s} provides its own propose_new_texts method; reflection_prompt_template will be ignored. "
             "Set reflection_prompt_template to None."
         )
@@ -330,7 +344,9 @@ def optimize(
         # Note: This materializes the DataLoader into memory. For very large datasets,
         # consider using ServerObserver directly with lazy example lookup instead.
         # DataLoader doesn't have __iter__, so we use fetch with all indices.
-        trainset_list = train_loader.fetch(list(range(len(train_loader)))) if len(train_loader) > 0 else []
+        trainset_list = (
+            train_loader.fetch(list(range(len(train_loader)))) if len(train_loader) > 0 else []
+        )
         valset_list = val_loader.fetch(list(range(len(val_loader)))) if len(val_loader) > 0 else []
 
         server_observer = ServerObserver(
@@ -371,10 +387,12 @@ def optimize(
         observer_manager=observer_manager,  # Pass observer manager
     )
 
-    def evaluator(inputs: list[DataInst], prog: dict[str, str]) -> tuple[list[RolloutOutput], list[float], list[str | None] | None]:
+    def evaluator(
+        inputs: list[DataInst], prog: dict[str, str]
+    ) -> tuple[list[RolloutOutput], list[float], list[str | None] | None]:
         eval_out = active_adapter.evaluate(inputs, prog, capture_traces=False)
         # feedbacks may not be present in all adapters (e.g., DSPy's DspyAdapter)
-        feedbacks = getattr(eval_out, 'feedbacks', None)
+        feedbacks = getattr(eval_out, "feedbacks", None)
         return eval_out.outputs, eval_out.scores, feedbacks
 
     merge_proposer: MergeProposer | None = None

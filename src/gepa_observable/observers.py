@@ -13,10 +13,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol, runtime_checkable
 
-# Import from local core and server modules
-from gepa_observable.core.serialization import serialize_output, serialize_example_inputs
-from gepa_observable.server.client import ServerClient
 from gepa_observable.core.lm_logger import DSPyLMLogger, LMCall
+
+# Import from local core and server modules
+from gepa_observable.core.serialization import serialize_example_inputs, serialize_output
+from gepa_observable.server.client import ServerClient
 
 
 @dataclass
@@ -219,7 +220,9 @@ class ObserverManager:
 class LogCapture(io.TextIOBase):
     """Captures stdout and sends to server while preserving original output."""
 
-    def __init__(self, original_stream: Any, server_client: ServerClient, stream_type: str = "stdout"):
+    def __init__(
+        self, original_stream: Any, server_client: ServerClient, stream_type: str = "stdout"
+    ):
         super().__init__()
         self._original = original_stream
         self._client = server_client
@@ -244,11 +247,15 @@ class LogCapture(io.TextIOBase):
                 # Only push to server if connected
                 if self._client and self._client.is_connected:
                     try:
-                        self._client.push_logs([{
-                            "logType": self._stream_type,
-                            "content": content,
-                            "timestamp": time.time(),
-                        }])
+                        self._client.push_logs(
+                            [
+                                {
+                                    "logType": self._stream_type,
+                                    "content": content,
+                                    "timestamp": time.time(),
+                                }
+                            ]
+                        )
                     except Exception:
                         pass  # Don't fail if server push fails
 
@@ -263,11 +270,15 @@ class LogCapture(io.TextIOBase):
                 # Only push to server if connected
                 if self._client and self._client.is_connected:
                     try:
-                        self._client.push_logs([{
-                            "logType": self._stream_type,
-                            "content": content,
-                            "timestamp": time.time(),
-                        }])
+                        self._client.push_logs(
+                            [
+                                {
+                                    "logType": self._stream_type,
+                                    "content": content,
+                                    "timestamp": time.time(),
+                                }
+                            ]
+                        )
                     except Exception:
                         pass
 
@@ -321,7 +332,11 @@ class LoggingObserver:
         self.accepted_candidates: list[int] = []
 
     def on_seed_validation(self, event: SeedValidationEvent) -> None:
-        avg_score = (sum(event.valset_scores.values()) / len(event.valset_scores)) if event.valset_scores else 0.0
+        avg_score = (
+            (sum(event.valset_scores.values()) / len(event.valset_scores))
+            if event.valset_scores
+            else 0.0
+        )
         if self.verbose:
             print(f"\n[Seed] Validated seed candidate: avg score = {avg_score:.2%}")
             print(f"       Total evals: {event.total_evals}")
@@ -330,14 +345,18 @@ class LoggingObserver:
     def on_iteration_start(self, event: IterationStartEvent) -> None:
         if self.verbose:
             print(f"\n[Iter {event.iteration}] Starting iteration")
-            print(f"         Selected candidate {event.selected_candidate_idx} (score: {event.parent_score:.2%})")
+            print(
+                f"         Selected candidate {event.selected_candidate_idx} (score: {event.parent_score:.2%})"
+            )
         self.iterations.append(event.iteration)
 
     def on_minibatch_eval(self, event: MiniBatchEvalEvent) -> None:
         if self.verbose:
             avg_score = (sum(event.scores) / len(event.scores)) if event.scores else 0.0
             candidate_type = "NEW" if event.is_new_candidate else "parent"
-            print(f"         [{candidate_type}] Minibatch eval: avg = {avg_score:.2%} (n={len(event.scores)})")
+            print(
+                f"         [{candidate_type}] Minibatch eval: avg = {avg_score:.2%} (n={len(event.scores)})"
+            )
             if event.trajectories:
                 print(f"                   Trajectories captured: {len(event.trajectories)}")
 
@@ -353,14 +372,18 @@ class LoggingObserver:
     def on_acceptance_decision(self, event: AcceptanceDecisionEvent) -> None:
         if self.verbose:
             status = "ACCEPTED" if event.accepted else "REJECTED"
-            print(f"         [Decision] {status}: parent={event.parent_score_sum:.2f} vs new={event.new_score_sum:.2f}")
+            print(
+                f"         [Decision] {status}: parent={event.parent_score_sum:.2f} vs new={event.new_score_sum:.2f}"
+            )
             if event.proceed_to_valset:
                 print("                    Proceeding to full valset evaluation")
 
     def on_valset_eval(self, event: ValsetEvalEvent) -> None:
         if self.verbose:
             is_best = " (NEW BEST!)" if event.is_new_best else ""
-            print(f"         [Valset] Candidate {event.candidate_idx}: score = {event.valset_score:.2%}{is_best}")
+            print(
+                f"         [Valset] Candidate {event.candidate_idx}: score = {event.valset_score:.2%}{is_best}"
+            )
         if event.is_new_best:
             self.accepted_candidates.append(event.candidate_idx)
 
@@ -370,12 +393,14 @@ class LoggingObserver:
             print(f"         [Merge] {status}: merged candidates {event.parent_candidate_ids}")
 
     def on_optimization_complete(self, event: OptimizationCompleteEvent) -> None:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("[Complete] Optimization finished!")
         print(f"           Total iterations: {event.total_iterations}")
         print(f"           Total evaluations: {event.total_evals}")
-        print(f"           Best candidate: {event.best_candidate_idx} (score: {event.best_score:.2%})")
-        print(f"{'='*60}")
+        print(
+            f"           Best candidate: {event.best_candidate_idx} (score: {event.best_score:.2%})"
+        )
+        print(f"{'=' * 60}")
 
     def get_summary(self) -> dict[str, Any]:
         """Get a summary of the optimization run."""
@@ -383,7 +408,9 @@ class LoggingObserver:
             "total_iterations": len(self.iterations),
             "total_reflections": len(self.reflections),
             "accepted_candidates": self.accepted_candidates,
-            "seed_avg_score": sum(self.seed_scores) / len(self.seed_scores) if self.seed_scores else 0,
+            "seed_avg_score": sum(self.seed_scores) / len(self.seed_scores)
+            if self.seed_scores
+            else 0,
         }
 
 
@@ -537,7 +564,7 @@ class ServerObserver:
         Example:
             >>> server = ServerObserver(...)
             >>> logger = server.get_lm_logger()
-            >>> lm = dspy.LM("openai/gpt-4o", callbacks=[logger] if logger else [])
+            >>> lm = dspy.LM("openai/gpt-5.2", callbacks=[logger] if logger else [])
         """
         return self._lm_logger
 
@@ -574,18 +601,22 @@ class ServerObserver:
         # Determine iteration (use current iteration or None if before optimization starts)
         iteration = self.current_iteration + 1 if self.current_iteration >= 0 else None
 
-        self.client.push_lm_calls([{
-            "callId": call.call_id,
-            "model": call.model,
-            "startTime": call.start_time,
-            "endTime": call.end_time,
-            "durationMs": call.duration_ms,
-            "iteration": iteration,
-            "phase": call.phase,
-            "candidateIdx": call.candidate_idx,
-            "inputs": call.inputs,
-            "outputs": call.outputs,
-        }])
+        self.client.push_lm_calls(
+            [
+                {
+                    "callId": call.call_id,
+                    "model": call.model,
+                    "startTime": call.start_time,
+                    "endTime": call.end_time,
+                    "durationMs": call.duration_ms,
+                    "iteration": iteration,
+                    "phase": call.phase,
+                    "candidateIdx": call.candidate_idx,
+                    "inputs": call.inputs,
+                    "outputs": call.outputs,
+                }
+            ]
+        )
 
     def _start_run(self, seed_candidate: dict[str, str]) -> str | None:
         """Start a new run on the server."""
@@ -603,9 +634,7 @@ class ServerObserver:
 
         if self.run_id:
             # Push seed candidate (index 0)
-            self.client.push_candidates([
-                (0, seed_candidate, None, 0)
-            ])
+            self.client.push_candidates([(0, seed_candidate, None, 0)])
             self.candidates_pushed.add(0)
             logging.info(f"[ServerObserver] Started run: {self.run_id}")
 
@@ -639,7 +668,9 @@ class ServerObserver:
             pareto_programs=pareto_programs,
             reflection_input=self.iteration_reflection_input,
             reflection_output=self.iteration_reflection_output,
-            proposed_changes=self.iteration_proposed_changes if self.iteration_proposed_changes else None,
+            proposed_changes=self.iteration_proposed_changes
+            if self.iteration_proposed_changes
+            else None,
             parent_candidate_idx=self.iteration_parent_idx,
             child_candidate_idxs=self.iteration_child_idxs if self.iteration_child_idxs else None,
         )
@@ -664,7 +695,11 @@ class ServerObserver:
         if not self.client.is_connected:
             return
 
-        self.seed_score = (sum(event.valset_scores.values()) / len(event.valset_scores)) if event.valset_scores else None
+        self.seed_score = (
+            (sum(event.valset_scores.values()) / len(event.valset_scores))
+            if event.valset_scores
+            else None
+        )
         self.total_evals = event.total_evals
         self.pareto_candidates.add(0)  # Seed starts on pareto front
 
@@ -673,19 +708,21 @@ class ServerObserver:
         for example_id, score in event.valset_scores.items():
             output = event.valset_outputs.get(example_id)
             feedback = event.valset_feedbacks.get(example_id) if event.valset_feedbacks else None
-            evaluations.append({
-                "evalId": str(uuid.uuid4()),
-                "exampleId": str(example_id),
-                "candidateIdx": 0,
-                "iteration": None,  # NULL for seed/baseline evaluations
-                "phase": "seed_validation",
-                "score": score,
-                "feedback": feedback,
-                "exampleInputs": self._get_example_inputs(example_id),
-                "predictionPreview": str(output) if output else None,
-                "predictionRef": serialize_output(output),
-                "timestamp": time.time(),
-            })
+            evaluations.append(
+                {
+                    "evalId": str(uuid.uuid4()),
+                    "exampleId": str(example_id),
+                    "candidateIdx": 0,
+                    "iteration": None,  # NULL for seed/baseline evaluations
+                    "phase": "seed_validation",
+                    "score": score,
+                    "feedback": feedback,
+                    "exampleInputs": self._get_example_inputs(example_id),
+                    "predictionPreview": str(output) if output else None,
+                    "predictionRef": serialize_output(output),
+                    "timestamp": time.time(),
+                }
+            )
         self.client.push_evaluations(evaluations)
 
         # Push iteration 0 (seed validation)
@@ -736,19 +773,21 @@ class ServerObserver:
         for i, (batch_id, score) in enumerate(zip(event.batch_ids, event.scores)):
             output = event.outputs[i] if i < len(event.outputs) else None
             feedback = event.feedbacks[i] if event.feedbacks and i < len(event.feedbacks) else None
-            evaluations.append({
-                "evalId": str(uuid.uuid4()),
-                "exampleId": str(batch_id),
-                "candidateIdx": event.candidate_idx,
-                "iteration": ui_iteration,
-                "phase": "minibatch_new" if event.is_new_candidate else "minibatch_parent",
-                "score": score,
-                "feedback": feedback,
-                "exampleInputs": self._get_example_inputs(batch_id),
-                "predictionPreview": str(output) if output else None,
-                "predictionRef": serialize_output(output),
-                "timestamp": time.time(),
-            })
+            evaluations.append(
+                {
+                    "evalId": str(uuid.uuid4()),
+                    "exampleId": str(batch_id),
+                    "candidateIdx": event.candidate_idx,
+                    "iteration": ui_iteration,
+                    "phase": "minibatch_new" if event.is_new_candidate else "minibatch_parent",
+                    "score": score,
+                    "feedback": feedback,
+                    "exampleInputs": self._get_example_inputs(batch_id),
+                    "predictionPreview": str(output) if output else None,
+                    "predictionRef": serialize_output(output),
+                    "timestamp": time.time(),
+                }
+            )
         self.client.push_evaluations(evaluations)
 
     def on_reflection(self, event: ReflectionEvent) -> None:
@@ -758,8 +797,7 @@ class ServerObserver:
         self.iteration_reflection_input = json.dumps(event.reflective_dataset, default=str)
         self.iteration_reflection_output = json.dumps(event.proposed_texts, default=str)
         self.iteration_proposed_changes = [
-            {"component": name, "newText": text}
-            for name, text in event.proposed_texts.items()
+            {"component": name, "newText": text} for name, text in event.proposed_texts.items()
         ]
 
     def on_acceptance_decision(self, event: AcceptanceDecisionEvent) -> None:
@@ -769,13 +807,17 @@ class ServerObserver:
         self.iteration_accepted = event.accepted
         ui_iteration = event.iteration + 1
 
-        self.client.push_logs([{
-            "logType": "info",
-            "content": f"{'ACCEPTED' if event.accepted else 'REJECTED'}: parent={event.parent_score_sum:.2f} vs new={event.new_score_sum:.2f}",
-            "timestamp": time.time(),
-            "iteration": ui_iteration,
-            "phase": "acceptance_decision",
-        }])
+        self.client.push_logs(
+            [
+                {
+                    "logType": "info",
+                    "content": f"{'ACCEPTED' if event.accepted else 'REJECTED'}: parent={event.parent_score_sum:.2f} vs new={event.new_score_sum:.2f}",
+                    "timestamp": time.time(),
+                    "iteration": ui_iteration,
+                    "phase": "acceptance_decision",
+                }
+            ]
+        )
 
     def on_valset_eval(self, event: ValsetEvalEvent) -> None:
         if not self.client.is_connected:
@@ -790,9 +832,9 @@ class ServerObserver:
         # Push new candidate if not already pushed
         if event.candidate_idx not in self.candidates_pushed:
             parent_idx = self.iteration_parent_idx if self.iteration_parent_idx is not None else 0
-            self.client.push_candidates([
-                (event.candidate_idx, event.candidate, parent_idx, event.iteration + 1)
-            ])
+            self.client.push_candidates(
+                [(event.candidate_idx, event.candidate, parent_idx, event.iteration + 1)]
+            )
             self.candidates_pushed.add(event.candidate_idx)
             self.num_candidates += 1
             self.iteration_child_idxs.append(event.candidate_idx)
@@ -804,19 +846,21 @@ class ServerObserver:
         for val_id, score in event.scores.items():
             output = event.outputs.get(val_id)
             feedback = event.feedbacks.get(val_id) if event.feedbacks else None
-            evaluations.append({
-                "evalId": str(uuid.uuid4()),
-                "exampleId": str(val_id),
-                "candidateIdx": event.candidate_idx,
-                "iteration": ui_iteration,
-                "phase": "valset",
-                "score": score,
-                "feedback": feedback,
-                "exampleInputs": self._get_example_inputs(val_id),
-                "predictionPreview": str(output) if output else None,
-                "predictionRef": serialize_output(output),
-                "timestamp": time.time(),
-            })
+            evaluations.append(
+                {
+                    "evalId": str(uuid.uuid4()),
+                    "exampleId": str(val_id),
+                    "candidateIdx": event.candidate_idx,
+                    "iteration": ui_iteration,
+                    "phase": "valset",
+                    "score": score,
+                    "feedback": feedback,
+                    "exampleInputs": self._get_example_inputs(val_id),
+                    "predictionPreview": str(output) if output else None,
+                    "predictionRef": serialize_output(output),
+                    "timestamp": time.time(),
+                }
+            )
         self.client.push_evaluations(evaluations)
 
     def on_merge(self, event: MergeEvent) -> None:

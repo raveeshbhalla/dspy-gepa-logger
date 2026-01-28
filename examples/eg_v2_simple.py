@@ -25,15 +25,15 @@ After: Use GEPA class like standard DSPy optimizers
 """
 
 import argparse
-import dspy
-from dotenv import load_dotenv
 import os
 import random
+
+import dspy
 import pandas as pd
+from dotenv import load_dotenv
 
 # Import from gepa-observable - note the DSPy-compatible import!
 from gepa_observable import GEPA
-
 
 # =============================================================================
 # DSPy Program Setup (same as with any DSPy optimizer)
@@ -80,13 +80,15 @@ def get_data():
 # =============================================================================
 
 
-def main(use_server: bool = False, server_url: str = "http://localhost:3000", use_mlflow: bool = False):
+def main(
+    use_server: bool = False, server_url: str = "http://localhost:3000", use_mlflow: bool = False
+):
     """Run GEPA optimization with the new DSPy-compatible API."""
     # Configure DSPy
     load_dotenv(".env.local")
 
     # Get LM configuration from environment variables
-    lm_model = os.getenv("DSPY_LM", "openai/gpt-4o-mini")
+    lm_model = os.getenv("DSPY_LM", "openai/gpt-5-mini")
     # Use same LM for reflection unless DSPY_REFLECTIVE_LM is explicitly set
     reflective_lm_model = os.getenv("DSPY_REFLECTIVE_LM", lm_model)
 

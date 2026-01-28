@@ -1332,7 +1332,7 @@ def configure_dspy_logging(tracker: GEPATracker, lm: Any, **dspy_kwargs):
 
     Example:
         gepa, tracker, _ = create_logged_gepa(my_metric)
-        configure_dspy_logging(tracker, dspy.LM("openai/gpt-4o-mini"))
+        configure_dspy_logging(tracker, dspy.LM("openai/gpt-5-mini"))
     """
     existing_callbacks = dspy_kwargs.pop('callbacks', [])
     all_callbacks = list(existing_callbacks) + tracker.get_dspy_callbacks()
@@ -1367,7 +1367,7 @@ gepa, tracker, logged_metric = create_logged_gepa(
 )
 
 # Configure DSPy with LM logging (context-tagged, thread-safe)
-configure_dspy_logging(tracker, dspy.LM("openai/gpt-4o-mini"))
+configure_dspy_logging(tracker, dspy.LM("openai/gpt-5-mini"))
 
 # Define your program
 class MyProgram(dspy.Module):

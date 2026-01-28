@@ -59,7 +59,7 @@ import dspy
 from gepa_observable import GEPA
 
 # Configure DSPy
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5-mini")
 dspy.configure(lm=lm)
 
 # Define your program
@@ -112,7 +112,7 @@ print(result.answer)
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `metric` | Required | 5-argument GEPA feedback metric function |
-| `reflection_lm` | `None` | LM for reflection (recommend strong model like gpt-4o) |
+| `reflection_lm` | `None` | LM for reflection (recommend strong model like gpt-5.2) |
 | `reflection_minibatch_size` | `3` | Examples per reflection step |
 | `candidate_selection_strategy` | `"pareto"` | `"pareto"` or `"current_best"` |
 | `skip_perfect_score` | `True` | Skip reflection if perfect score achieved |
@@ -214,7 +214,7 @@ result = optimize(
     trainset=train_data,
     valset=val_data,
     adapter=adapter,
-    reflection_lm="openai/gpt-4o",
+    reflection_lm="openai/gpt-5.2",
     max_metric_calls=100,
     server_url="http://localhost:3000",
 )

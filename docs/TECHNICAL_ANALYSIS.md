@@ -251,7 +251,7 @@ MLflow allows arbitrary attributes:
 ```python
 span.set_attributes({
     # Standard MLflow/OpenTelemetry
-    "llm.model": "gpt-4o-mini",
+    "llm.model": "gpt-5-mini",
     "llm.token_count.prompt": 1200,
 
     # GEPA-specific (custom)
@@ -928,7 +928,7 @@ gepa = GEPA(metric=my_metric, auto="light")
 create_instrumented_gepa(gepa, tracker, log_file="./gepa.log")
 
 # Run optimization
-tracker.start_run(config={"auto": "light", "model": "gpt-4o-mini"})
+tracker.start_run(config={"auto": "light", "model": "gpt-5-mini"})
 tracker.register_examples(trainset, valset)
 
 try:
